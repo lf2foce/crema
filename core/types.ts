@@ -221,6 +221,14 @@ export interface Run {
   error: string | null;
 }
 
+export interface HostedDatabase {
+  id: number;
+  name: string;
+  dbName: string;
+  createdBy: string;
+  createdAt: string;
+}
+
 export interface SavedQuery {
   id: number;
   name: string;

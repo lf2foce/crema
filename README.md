@@ -70,6 +70,17 @@ pnpm creama query mrr --grain quarter --from 2025-10-01
 pnpm creama audit
 ```
 
+## Hosted databases
+
+Admins can create Postgres databases for apps built elsewhere (Database → Hosted databases), Neon-style: pick a database, choose the login, copy the connection string or a ready snippet (`.env`, psql, Node.js, Drizzle, Python). Each database gets:
+
+- an owner login for the app: read/write in its own database only (no superuser, can't create roles or databases, 20 connections)
+- a read-only login Creama uses when you choose **Use in Creama**, so the app's data can be discovered and certified like any other source
+
+Passwords are stored sealed with AES-256-GCM (key: `CREAMA_ENCRYPTION_KEY`, else derived from `BETTER_AUTH_SECRET` — changing it makes stored passwords unreadable; reset them). Hosted databases can't connect to each other (`CONNECT` is revoked from `PUBLIC`). Deleting asks for the database name and is refused while Creama is analysing it.
+
+Where databases are created: `CREAMA_HOSTING_ADMIN_URL` if set, otherwise the Postgres server in `DATABASE_URL` (works out of the box in development). In production use a separate cluster: the hosting login can create roles, apps' load and disk use would hit Creama's own state, app databases must be reachable from the internet while Creama's state shouldn't be, and cluster-level restores would rewind both. Serve it over TLS with `scram-sha-256` in `pg_hba.conf`. Not yet: branching, per-database backups, size quotas, connection pooling.
+
 ## What Creama checks (without the model)
 
 Each proposed definition is executed and inspected by code before you see it, and again at the moment you certify it:
@@ -103,6 +114,7 @@ core/compare.ts     row-level diffs between definitions and their explanations
 core/db.ts          Postgres pool + append-only SQL migrations (no ORM)
 core/registry.ts    runs, proposals, immutable versions, audit log, saved queries
 core/explore.ts     SQL editor + table browser (read-only)
+core/hosting.ts     hosted databases: create, isolate, rotate passwords, drop
 core/mcpTools.ts    the MCP tools, shared by stdio and HTTP
 lib/auth.ts         Better Auth: sign-in, invitations, OAuth server for MCP
 core/service.ts     the application API

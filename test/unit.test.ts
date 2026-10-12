@@ -112,3 +112,17 @@ describe("schema map layout", async () => {
     expect(Object.keys(autoLayout(cyc, () => 100))).toHaveLength(2);
   });
 });
+
+describe("sealed secrets", async () => {
+  const { seal, unseal } = await import("../core/secret");
+  it("round-trips, never repeats ciphertext, and rejects tampering", () => {
+    process.env.CREAMA_ENCRYPTION_KEY ??= "test-key-for-unit-tests";
+    const a = seal("p@ss"), b = seal("p@ss");
+    expect(a).not.toBe(b);
+    expect(a).not.toContain("p@ss");
+    expect(unseal(a)).toBe("p@ss");
+    const parts = a.split(".");
+    parts[3] = parts[3].slice(0, -2) + (parts[3].endsWith("AA") ? "BB" : "AA");
+    expect(() => unseal(parts.join("."))).toThrow();
+  });
+});

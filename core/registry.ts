@@ -4,7 +4,7 @@ import type pg from "pg";
 import { database, type Db } from "./db";
 import type {
   AuditEvent, Candidate, CandidateSpec, Comparison, Concept, ConceptSpec, EntityReading,
-  Metric, MetricVersion, Run, RunStep, SavedQuery, Verification,
+  HostedDatabase, Metric, MetricVersion, Run, RunStep, SavedQuery, Verification,
 } from "./types";
 
 type Q = Pick<pg.PoolClient, "query">;
@@ -13,10 +13,13 @@ const isoOrNull = (v: unknown): string | null => (v == null ? null : iso(v));
 const json = (v: unknown) => (v === undefined ? null : JSON.stringify(v));
 
 export class Registry {
-  readonly db: Db;
+  constructor(readonly url?: string, readonly opts: { schema?: string } = {}) {
+    database(url, opts.schema); // fail fast without DATABASE_URL
+  }
 
-  constructor(url?: string, opts: { schema?: string } = {}) {
-    this.db = database(url, opts.schema);
+  /** Looked up on every use: picks up migrations added while the process (and its pool) lives on. */
+  get db(): Db {
+    return database(this.url, this.opts.schema);
   }
 
   /** Every call waits for migrations once, then runs on the shared pool. */
@@ -82,6 +85,36 @@ export class Registry {
     const rows = await this.q("DELETE FROM saved_queries WHERE id = $1 RETURNING id", [id]);
     if (rows.length) await this.event(actor, "query.deleted", `query:${id}`);
     return { deleted: rows.length };
+  }
+
+  // ---------- hosted databases ----------
+  async hostedDatabases(): Promise<HostedDatabase[]> {
+    return (await this.q("SELECT * FROM hosted_databases WHERE deleted_at IS NULL ORDER BY id"))
+      .map((r) => ({ id: r.id, name: r.name, dbName: r.db_name, createdBy: r.created_by, createdAt: iso(r.created_at) }));
+  }
+  async hostedDatabase(id: number): Promise<HostedDatabase | null> {
+    return (await this.hostedDatabases()).find((h) => h.id === id) ?? null;
+  }
+  async addHostedDatabase(name: string, dbName: string, actor: string, sealed: { owner: string; reader: string }): Promise<number> {
+    return this.tx(async (c) => {
+      const id = (await c.query("INSERT INTO hosted_databases (name, db_name, created_by, owner_password, reader_password) VALUES ($1, $2, $3, $4, $5) RETURNING id", [name, dbName, actor, sealed.owner, sealed.reader])).rows[0].id as number;
+      await this.event(actor, "hosting.created", `hosted:${dbName}`, { name }, c);
+      return id;
+    });
+  }
+  /** Sealed passwords (core/secret.ts) — never returned by the listing. */
+  async hostedPasswords(id: number): Promise<{ owner: string | null; reader: string | null }> {
+    const r = (await this.q("SELECT owner_password, reader_password FROM hosted_databases WHERE id = $1 AND deleted_at IS NULL", [id]))[0];
+    return { owner: r?.owner_password ?? null, reader: r?.reader_password ?? null };
+  }
+  async setHostedPassword(id: number, which: "owner" | "reader", sealed: string) {
+    await this.q(`UPDATE hosted_databases SET ${which === "owner" ? "owner_password" : "reader_password"} = $1 WHERE id = $2`, [sealed, id]);
+  }
+  async removeHostedDatabase(id: number, actor: string) {
+    await this.tx(async (c) => {
+      const r = (await c.query("UPDATE hosted_databases SET deleted_at = now(), db_name = db_name || '#deleted-' || id WHERE id = $1 AND deleted_at IS NULL RETURNING name, db_name", [id])).rows[0];
+      if (r) await this.event(actor, "hosting.deleted", `hosted:${String(r.db_name).split("#")[0]}`, { name: r.name }, c);
+    });
   }
 
   // ---------- runs ----------

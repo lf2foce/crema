@@ -66,9 +66,28 @@ CREATE TRIGGER events_append_only BEFORE UPDATE OR DELETE ON events
   FOR EACH ROW EXECUTE FUNCTION creama_refuse_change('audit log is append-only');
 `,
   },
+  {
+    id: "002_hosted_databases",
+    sql: `
+-- databases Creama created for apps elsewhere (core/hosting.ts); passwords are never stored
+CREATE TABLE hosted_databases (
+  id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  name text NOT NULL, db_name text NOT NULL UNIQUE,
+  created_by text NOT NULL, created_at timestamptz NOT NULL DEFAULT now(),
+  deleted_at timestamptz
+);
+`,
+  },
+  {
+    id: "003_hosted_passwords",
+    sql: `
+-- passwords sealed with AES-256-GCM (core/secret.ts) so connection details can be shown again
+ALTER TABLE hosted_databases ADD COLUMN owner_password text, ADD COLUMN reader_password text;
+`,
+  },
 ];
 
-export type Db = { pool: pg.Pool; ready: Promise<void> };
+export type Db = { pool: pg.Pool; ready: Promise<void>; migrated: string };
 const dbs: Map<string, Db> = ((globalThis as any).__creamaDbs ??= new Map());
 
 /**
@@ -78,13 +97,20 @@ const dbs: Map<string, Db> = ((globalThis as any).__creamaDbs ??= new Map());
 export function database(url = process.env.DATABASE_URL, schema?: string): Db {
   if (!url) throw new Error("DATABASE_URL is not set. Creama keeps its state in Postgres: point DATABASE_URL at a database it can write to.");
   const id = `${url}#${schema ?? ""}`;
+  const wanted = MIGRATIONS.map((m) => m.id).join(",");
   let d = dbs.get(id);
   if (!d) {
     const pool = new pg.Pool({ connectionString: url, max: 8, idleTimeoutMillis: 30_000, ...(schema ? { options: `-c search_path=${schema}` } : {}) });
     pool.on("error", () => {}); // a dropped idle client must not crash the server
-    d = { pool, ready: migrate(pool, schema) };
+    d = { pool, ready: migrate(pool, schema), migrated: wanted };
     d.ready.catch(() => dbs.delete(id)); // let the next call retry a failed migration
     dbs.set(id, d);
+  } else if (d.migrated !== wanted) {
+    // the pool outlives hot reloads (it's on globalThis): apply migrations added since it was created
+    const db = d;
+    db.migrated = wanted;
+    db.ready = db.ready.catch(() => {}).then(() => migrate(db.pool, schema));
+    db.ready.catch(() => { db.migrated = ""; }); // retry on the next call
   }
   return d;
 }

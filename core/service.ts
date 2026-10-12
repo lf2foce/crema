@@ -8,6 +8,8 @@ import { propose, repair } from "./propose";
 import { implId, Registry, registry } from "./registry";
 import { introspect, modelPayload, snapshot } from "./schema";
 import { ExploreError, runSql, tableRows } from "./explore";
+import { Hosting, HostingError } from "./hosting";
+import { seal, unseal } from "./secret";
 import type { Candidate, CandidateSpec, Concept, Metric, MetricKind, MetricUnit, MetricVersion, SchemaSnapshot, Table, Verification } from "./types";
 import { currentCurrency, display, fmt } from "./format";
 import { driftedRelations, fingerprint, pgError, verify, windows } from "./verify";
@@ -221,6 +223,102 @@ export class Creama {
   }
 
   async deleteQuery(id: number, actor: string) { return await this.reg.deleteQuery(id, actor); }
+
+  // ---------- hosted databases (Postgres for apps elsewhere) ----------
+
+  private hosting(): Hosting {
+    const h = Hosting.fromEnv();
+    if (!h) throw new CreamaError("Database hosting needs a Postgres server: set CREAMA_HOSTING_ADMIN_URL.", 409);
+    return h;
+  }
+
+  async hostedList() {
+    const found = Hosting.fromEnv();
+    const check = found ? await found.canAdminister() : { ok: false, reason: "No Postgres server configured for hosting." };
+    const h = check.ok ? found : null;
+    const rows = await this.reg.hostedDatabases();
+    const info = h ? await h.info(rows.map((r) => r.dbName)).catch(() => ({} as Awaited<ReturnType<Hosting["info"]>>)) : {};
+    const current = await this.connectionUrl();
+    let using: string | null = null;
+    try { if (current) { const u = new URL(current); using = u.pathname.slice(1); } } catch { /* not a URL */ }
+    return {
+      enabled: Boolean(h),
+      reason: check.ok ? null : check.reason ?? null,
+      shared: found?.shared ?? false,
+      address: found ? `${found.publicAddress.host}:${found.publicAddress.port}` : null,
+      ssl: found?.publicAddress.ssl ?? false,
+      databases: rows.map((r) => ({
+        ...r, owner: `${r.dbName}_owner`, sizeBytes: info[r.dbName]?.sizeBytes ?? null, connections: info[r.dbName]?.connections ?? null,
+        missing: Boolean(h) && !info[r.dbName], inCreama: using === r.dbName,
+      })),
+    };
+  }
+
+  /** Creates a database for an app. The connection string (with the owner's password) is returned once. */
+  async createHosted(name: string, actor: string) {
+    const h = this.hosting();
+    if (!name?.trim()) throw new CreamaError("Give the database a name.");
+    try {
+      const dbName = Hosting.dbNameFor(name);
+      const r = await h.create(dbName);
+      const id = await this.reg.addHostedDatabase(name.trim().slice(0, 80), dbName, actor, { owner: seal(r.ownerPassword), reader: seal(r.readerPassword) });
+      return { id, dbName, owner: r.owner };
+    } catch (e) { throw hostingError(e); }
+  }
+
+  /** Host, user, password… for one of a hosted database's logins. Admin only (enforced by the route). */
+  async hostedConnection(id: number, role: "owner" | "reader") {
+    const h = this.hosting();
+    const row = await this.reg.hostedDatabase(id);
+    if (!row) throw new CreamaError("Hosted database not found.", 404);
+    const sealed = (await this.reg.hostedPasswords(id))[role];
+    let pw: string;
+    try { pw = sealed ? unseal(sealed) : ""; } catch { pw = ""; }
+    if (!pw) throw new CreamaError("This password can't be shown (it was never stored, or the encryption key changed). Reset it to get a new one.", 409);
+    const login = role === "owner" ? `${row.dbName}_owner` : `${row.dbName}_creama`;
+    return h.connectionParts(row.dbName, login, pw);
+  }
+
+  async resetHostedPassword(id: number, actor: string, role: "owner" | "reader" = "owner") {
+    const h = this.hosting();
+    const row = await this.reg.hostedDatabase(id);
+    if (!row) throw new CreamaError("Hosted database not found.", 404);
+    try {
+      const pw = await h.resetPassword(`${row.dbName}_${role === "owner" ? "owner" : "creama"}`);
+      await this.reg.setHostedPassword(id, role, seal(pw));
+      await this.reg.event(actor, "hosting.password_reset", `hosted:${row.dbName}`, { role });
+      return this.hostedConnection(id, role);
+    } catch (e) { throw hostingError(e); }
+  }
+
+  /** Point Creama at a hosted database through its read-only role. */
+  async useHosted(id: number, actor: string) {
+    const h = this.hosting();
+    const row = await this.reg.hostedDatabase(id);
+    if (!row) throw new CreamaError("Hosted database not found.", 404);
+    try {
+      // the stored read-only password; issue one if this database predates stored passwords
+      const sealed = (await this.reg.hostedPasswords(id)).reader;
+      let pw = "";
+      try { pw = sealed ? unseal(sealed) : ""; } catch { /* key changed */ }
+      if (!pw) { pw = await h.resetPassword(`${row.dbName}_creama`); await this.reg.setHostedPassword(id, "reader", seal(pw)); }
+      // Creama reaches the cluster the way it administers it, not through the public address
+      const u = new URL(h.adminUrl);
+      u.username = `${row.dbName}_creama`; u.password = pw; u.pathname = `/${row.dbName}`;
+      return await this.connect(u.toString(), actor);
+    } catch (e) { throw hostingError(e); }
+  }
+
+  async deleteHosted(id: number, actor: string) {
+    const h = this.hosting();
+    const row = await this.reg.hostedDatabase(id);
+    if (!row) throw new CreamaError("Hosted database not found.", 404);
+    if ((await this.hostedList()).databases.find((d) => d.id === id)?.inCreama) {
+      throw new CreamaError("Creama is analysing this database. Connect Creama to another database first.", 409);
+    }
+    try { await h.drop(row.dbName); } catch (e) { throw hostingError(e); }
+    await this.reg.removeHostedDatabase(id, actor);
+  }
 
   // ---------- schema map ----------
 
@@ -468,6 +566,12 @@ function mergeDef(base: Pick<CandidateSpec, "kind" | "unit" | "sql" | "membersSq
   const sql = (e.sql ?? base.sql).trim();
   const membersSql = e.membersSql === undefined ? base.membersSql : e.membersSql?.trim() || null;
   return { kind: e.kind ?? base.kind, unit: e.unit ?? base.unit, sql, membersSql, memberTable: membersSql ? base.memberTable : null };
+}
+
+function hostingError(e: unknown): Error {
+  if (e instanceof CreamaError) return e;
+  if (e instanceof HostingError) return new CreamaError(e.message);
+  return new CreamaError(`Hosting: ${pgError(e)}`, 502);
 }
 
 function requireActor(actor: string | undefined | null): string {

@@ -11,9 +11,10 @@ import { Schema } from "./Schema";
 import { SqlEditor } from "./SqlEditor";
 import { Tables } from "./Tables";
 import { People } from "./People";
+import { Hosted } from "./Hosted";
 import { authClient } from "@/lib/authClient";
 
-export type Sel = { type: "list" } | { type: "business" } | { type: "new" } | { type: "schema" } | { type: "sql" } | { type: "people" } | { type: "tables"; table: string | null } | { type: "proposal"; id: number } | { type: "metric"; key: string };
+export type Sel = { type: "list" } | { type: "business" } | { type: "new" } | { type: "schema" } | { type: "sql" } | { type: "people" } | { type: "hosted" } | { type: "tables"; table: string | null } | { type: "proposal"; id: number } | { type: "metric"; key: string };
 
 function readHash(): Sel {
   if (typeof window === "undefined") return { type: "list" };
@@ -23,6 +24,7 @@ function readHash(): Sel {
   if (h === "schema") return { type: "schema" };
   if (h === "sql") return { type: "sql" };
   if (h === "people") return { type: "people" };
+  if (h === "hosted") return { type: "hosted" };
   if (h === "tables") return { type: "tables", table: null };
   const [t, v] = h.split("/");
   if (t === "p" && v) return { type: "proposal", id: Number(v) };
@@ -32,7 +34,7 @@ function readHash(): Sel {
 }
 
 export function hashOf(s: Sel) {
-  return s.type === "list" ? "#" : s.type === "business" ? "#business" : s.type === "new" ? "#new" : s.type === "schema" ? "#schema" : s.type === "sql" ? "#sql" : s.type === "people" ? "#people" : s.type === "tables" ? (s.table ? `#tables/${encodeURIComponent(s.table)}` : "#tables") : s.type === "proposal" ? `#p/${s.id}` : `#m/${encodeURIComponent(s.key)}`;
+  return s.type === "list" ? "#" : s.type === "business" ? "#business" : s.type === "new" ? "#new" : s.type === "schema" ? "#schema" : s.type === "sql" ? "#sql" : s.type === "people" ? "#people" : s.type === "hosted" ? "#hosted" : s.type === "tables" ? (s.table ? `#tables/${encodeURIComponent(s.table)}` : "#tables") : s.type === "proposal" ? `#p/${s.id}` : `#m/${encodeURIComponent(s.key)}`;
 }
 
 export function App() {
@@ -80,7 +82,14 @@ export function App() {
 
   if (error && !state) return <Shell sel={sel}><div className="center"><div className="hero"><h1>Can’t reach Creama</h1><p className="lead">{error}</p><button className="btn" onClick={reload}>Retry</button></div></div></Shell>;
   if (!state) return <Shell sel={sel}><div className="center"><span className="spin" /></div></Shell>;
-  if (!state.connection) return <Shell sel={sel}><Connect state={state} onDone={reload} notify={notify} />{toast && <Toast {...toast} />}</Shell>;
+  // creating a database or inviting people doesn't need an analysed database yet
+  if (!state.connection && (sel.type === "hosted" || sel.type === "people")) return (
+    <Shell state={state} sel={sel}>
+      {sel.type === "hosted" ? <><DatabaseTabs sel={sel} state={state} /><Hosted notify={notify} reload={reload} /></> : state.me && <People me={state.me} notify={notify} />}
+      {toast && <Toast {...toast} />}
+    </Shell>
+  );
+  if (!state.connection) return <Shell state={state} sel={sel}><Connect state={state} onDone={reload} notify={notify} />{toast && <Toast {...toast} />}</Shell>;
   if (state.run?.status === "running") return <Shell state={state} sel={sel}><Discovery runId={state.run.id} onDone={() => { setSel({ type: "list" }); reload(); }} /></Shell>;
 
   const empty = !state.proposals.length && !state.metrics.length;
@@ -97,6 +106,7 @@ export function App() {
       {sel.type === "schema" && <Schema notify={notify} />}
       {sel.type === "sql" && <SqlEditor state={state} notify={notify} />}
       {sel.type === "people" && state.me && <People me={state.me} notify={notify} />}
+      {sel.type === "hosted" && <Hosted notify={notify} reload={reload} />}
       {sel.type === "tables" && <Tables table={sel.table} notify={notify} />}
       {sel.type === "new" && <NewMetric notify={notify} back={toList} onCreated={async (key) => { await reload(); setSel({ type: "metric", key }); }} />}
       {sel.type === "proposal" && selected && (
@@ -112,16 +122,17 @@ export function App() {
   );
 }
 
-const isDatabase = (s: Sel) => s.type === "schema" || s.type === "tables" || s.type === "sql";
+const isDatabase = (s: Sel) => s.type === "schema" || s.type === "tables" || s.type === "sql" || s.type === "hosted";
 
 /** One place for looking at the raw database: its shape, its rows, and ad-hoc queries. */
 function DatabaseTabs({ sel, state }: { sel: Sel; state: AppState }) {
-  const tabs: [Sel["type"], string, string][] = [["schema", "Schema", "#schema"], ["tables", "Tables", "#tables"], ["sql", "SQL editor", "#sql"]];
+  const tabs: [Sel["type"], string, string][] = [["schema", "Schema", "#schema"], ["tables", "Tables", "#tables"], ["sql", "SQL editor", "#sql"],
+    ...(state.me?.role === "admin" ? [["hosted", "Hosted databases", "#hosted"] as [Sel["type"], string, string]] : [])];
   return (
     <nav className="dbtabs" aria-label="Database">
       {tabs.map(([t, label, href]) => <a key={t} href={href} className={sel.type === t ? "on" : ""} aria-current={sel.type === t ? "page" : undefined}>{label}</a>)}
       <span className="grow" />
-      <span className="dbtabs-note">{state.connection?.database} · read-only{state.connection && !state.connection.readOnly ? " transactions (this role can write)" : ""}</span>
+      <span className="dbtabs-note">{state.connection ? <>{state.connection.database} · read-only{!state.connection.readOnly ? " transactions (this role can write)" : ""}</> : "no database analysed yet"}</span>
     </nav>
   );
 }
@@ -175,7 +186,7 @@ function Shell({ state, sel, children }: { state?: AppState; sel: Sel; children:
         {busy && <span>scanning…</span>}
         {state?.me && (
           <span className="sb-user">
-            <span>·</span>
+            {c && <span>·</span>}
             {state.me.role === "admin" ? <a href="#people" className={sel.type === "people" ? "on" : ""} title="People who can sign in">{state.me.name}</a> : <span>{state.me.name}</span>}
             <span>·</span>
             <button className="sb-btn" onClick={async () => { await authClient.signOut(); window.location.href = "/sign-in"; }}>sign out</button>
@@ -227,6 +238,7 @@ function Connect({ state, onDone, notify }: { state: AppState; onDone: () => voi
           )}
         </div>
       </form>
+      {state.me?.role === "admin" && <p className="connect-alt">No database yet? <a href="#hosted">Create one</a> for your app; Creama can analyse it too.</p>}
       <div className="trust-row">
         <span>Never writes to your database</span>
         <span title={`Model: ${state.model.name}`}>No rows sent to the AI</span>
