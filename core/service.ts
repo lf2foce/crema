@@ -143,29 +143,29 @@ export class Creama {
     const source = await this.reg.source(this.scope.workspaceId, id);
     if (!source || source.kind !== "hosted") throw new CreamaError("Hosted database not found.", 404);
     if (source.status !== "failed") throw new CreamaError("Only a database that failed to provision can be retried.", 409);
-    await this.provision(h, source, actor, { cleanFirst: true });
+    await this.provision(h, source, actor);
     return (await this.reg.source(this.scope.workspaceId, id))!;
   }
 
-  private async provision(h: Hosting, source: Source, actor: string, opts: { cleanFirst?: boolean } = {}) {
+  private async provision(h: Hosting, source: Source, actor: string) {
     const dbName = source.dbName!;
     await this.reg.updateSource(source.id, { status: "provisioning", error: null });
     try {
-      if (opts.cleanFirst) await h.drop(dbName); // leftovers of the failed attempt (only names Creama derives)
       const r = await h.create(dbName);
       await this.reg.updateSource(source.id, {
         status: "ready", error: null, readOnly: true,
         connection: seal(h.internalUrl(dbName, r.reader, r.readerPassword)),
         ownerPassword: seal(r.ownerPassword), readerPassword: seal(r.readerPassword),
       });
-      await this.ev(actor, "source.provisioned", `source:${source.slug}`, { dbName }, source);
     } catch (e) {
       const message = hostingError(e).message;
-      await h.drop(dbName).catch(() => {}); // don't leave half-made databases or roles behind
+      // Hosting.create cleans up only resources this attempt actually created. Never drop by
+      // name here: the error may be a collision with somebody else's existing database.
       await this.reg.updateSource(source.id, { status: "failed", error: message });
       await this.ev(actor, "source.provisioning_failed", `source:${source.slug}`, { dbName, error: message }, source);
       throw new CreamaError(`Could not create ${dbName}: ${message}`, 502);
     }
+    await this.ev(actor, "source.provisioned", `source:${source.slug}`, { dbName }, source);
   }
 
   /** Host, user, password… for one of a hosted database's logins. Admin only (enforced by the route). */
@@ -552,13 +552,14 @@ export class Creama {
     const v = opts.version ? await this.reg.version(m.id, opts.version) : m.current;
     if (!v) throw new CreamaError(`Version ${opts.version} of “${ref}” does not exist.`, 404);
 
-    const drift = driftedRelations(m.current.fingerprint, await svc.tables(true, source));
+    const tables = await svc.tables(true, source);
+    const drift = driftedRelations(v.fingerprint, tables);
     if (drift.length) {
       const why = `Schema changed since certification in: ${drift.join(", ")}.`;
-      if (m.status !== "needs_attention" || m.attention !== why) await this.reg.setMetricStatus(m.id, "needs_attention", why);
+      if (v.version === m.current.version && (m.status !== "needs_attention" || m.attention !== why)) await this.reg.setMetricStatus(m.id, "needs_attention", why);
       throw new CreamaError(`“${ref}” needs attention: ${why} It isn’t served until someone re-certifies it.`, 409);
     }
-    if (m.status === "needs_attention") await this.reg.setMetricStatus(m.id, "certified"); // the schema came back
+    if (m.status === "needs_attention" && !driftedRelations(m.current.fingerprint, tables).length) await this.reg.setMetricStatus(m.id, "certified"); // the schema came back
 
     const to = opts.to ? parseDate(opts.to, "to") : new Date();
     const from = opts.from ? parseDate(opts.from, "from") : new Date(Date.UTC(to.getUTCFullYear() - 1, to.getUTCMonth(), 1));

@@ -89,26 +89,25 @@ export class Hosting {
     const owner = `${dbName}_owner`, reader = `${dbName}_creama`;
     const ownerPw = password(), readerPw = password();
     await this.admin(async (c) => {
+      // Serialize Creama provisioning for this name. A name collision is not ownership.
+      await c.query("SELECT pg_advisory_lock(hashtext($1))", [`creama.hosting:${dbName}`]);
+      let madeOwner = false, madeReader = false, madeDatabase = false;
+      try {
       const exists = await c.query("SELECT 1 FROM pg_database WHERE datname = $1 UNION ALL SELECT 1 FROM pg_roles WHERE rolname = ANY($2)", [dbName, [owner, reader]]);
       if (exists.rowCount) throw new HostingError(`A database or role named “${dbName}” already exists.`);
       // roles: no superuser, can't make roles or databases, capped connections
       await c.query(`CREATE ROLE ${quoteIdent(owner)} LOGIN PASSWORD ${literal(ownerPw)} NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS CONNECTION LIMIT 20`);
+      madeOwner = true;
       await c.query(`CREATE ROLE ${quoteIdent(reader)} LOGIN PASSWORD ${literal(readerPw)} NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS CONNECTION LIMIT 5`);
+      madeReader = true;
       await c.query(`ALTER ROLE ${quoteIdent(reader)} SET default_transaction_read_only = on`);
       await c.query(`ALTER ROLE ${quoteIdent(owner)} SET idle_in_transaction_session_timeout = '10min'`);
       // CREATE DATABASE can't run inside a transaction; a failure past this point is cleaned up below
-      try {
         await c.query(`CREATE DATABASE ${quoteIdent(dbName)} OWNER ${quoteIdent(owner)}`);
+        madeDatabase = true;
         // only its own roles may connect: hosted databases can't see each other
         await c.query(`REVOKE ALL ON DATABASE ${quoteIdent(dbName)} FROM PUBLIC`);
         await c.query(`GRANT CONNECT ON DATABASE ${quoteIdent(dbName)} TO ${quoteIdent(reader)}`);
-      } catch (e) {
-        await c.query(`DROP DATABASE IF EXISTS ${quoteIdent(dbName)} WITH (FORCE)`).catch(() => {});
-        await c.query(`DROP ROLE IF EXISTS ${quoteIdent(owner)}`).catch(() => {});
-        await c.query(`DROP ROLE IF EXISTS ${quoteIdent(reader)}`).catch(() => {});
-        throw e;
-      }
-    });
     await this.admin(async (c) => {
       await c.query(`ALTER SCHEMA public OWNER TO ${quoteIdent(owner)}`);
       await c.query(`REVOKE ALL ON SCHEMA public FROM PUBLIC`);
@@ -117,6 +116,20 @@ export class Hosting {
       await c.query(`ALTER DEFAULT PRIVILEGES FOR ROLE ${quoteIdent(owner)} IN SCHEMA public GRANT SELECT ON TABLES TO ${quoteIdent(reader)}`);
       await c.query(`ALTER DEFAULT PRIVILEGES FOR ROLE ${quoteIdent(owner)} IN SCHEMA public GRANT SELECT ON SEQUENCES TO ${quoteIdent(reader)}`);
     }, dbName);
+      } catch (e) {
+        const cleanupErrors: string[] = [];
+        const cleanup = async (sql: string) => {
+          try { await c.query(sql); } catch (error) { cleanupErrors.push((error as Error).message); }
+        };
+        if (madeDatabase) await cleanup(`DROP DATABASE IF EXISTS ${quoteIdent(dbName)} WITH (FORCE)`);
+        if (madeReader) await cleanup(`DROP ROLE IF EXISTS ${quoteIdent(reader)}`);
+        if (madeOwner) await cleanup(`DROP ROLE IF EXISTS ${quoteIdent(owner)}`);
+        if (cleanupErrors.length) throw new HostingError(`${(e as Error).message}; cleanup incomplete: ${cleanupErrors.join("; ")}. Inspect leftovers before retrying.`);
+        throw e;
+      } finally {
+        await c.query("SELECT pg_advisory_unlock(hashtext($1))", [`creama.hosting:${dbName}`]).catch(() => {});
+      }
+    });
     return { owner, reader, ownerPassword: ownerPw, readerPassword: readerPw };
   }
 

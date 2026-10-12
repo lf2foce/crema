@@ -102,7 +102,16 @@ Each proposed definition is executed and inspected by code before you see it, an
 - Creama's state lives in Postgres (`DATABASE_URL`), separate from the database it analyses. Certified versions are immutable and the audit log is append-only, enforced by triggers (no UPDATE or DELETE).
 - Every route requires a signed-in person; the certifier is the signed-in account, not a typed name. Only admins change the analysed database or invite people. `/api/v1` also accepts `CREAMA_API_TOKEN` for software.
 - The SQL editor and table browser show raw rows to signed-in people (one read-only `SELECT`/`WITH` at a time). MCP clients never see raw tables: only certified metrics.
-- The analysed database's connection string is stored in the state database's `settings` table in plain text; restrict access to that database.
+- Each source's connection string is sealed with AES-256-GCM in the state database. Keep the encryption key backed up separately and restrict access to both.
+
+### Upgrading a single-source installation
+
+Back up Creama's state database and keep its encryption key before running `pnpm db:migrate`.
+The legacy `001_base` schema is upgraded transactionally: its saved `database_url` becomes the
+sealed `legacy` source, preserving metrics, certified version payloads and audit records. If old
+metrics have no saved source URL, migration refuses to guess. Existing hosted records and passwords
+are preserved but marked failed pending cluster verification; no hosted database is created or dropped
+by migration. Do not retry those imported records blindly: their existing databases must be reconciled first.
 
 ## Architecture
 

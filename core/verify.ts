@@ -79,7 +79,7 @@ export async function verify(wh: Warehouse, def: Def, schema: SchemaSnapshot, w 
 
   // relations actually touched (from the planner, not from parsing)
   try {
-    const plan = await wh.query<{ "QUERY PLAN": unknown }>(`EXPLAIN (FORMAT JSON) ${bound.text}`, bound.values);
+    const plan = await wh.query<{ "QUERY PLAN": unknown }>(`EXPLAIN (VERBOSE, FORMAT JSON) ${bound.text}`, bound.values);
     base.relations = relationsFromPlan(plan[0]["QUERY PLAN"]);
   } catch {
     /* non-fatal */
