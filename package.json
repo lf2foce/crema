@@ -15,6 +15,7 @@
     "demo:db": "bash demo/setup.sh",
     "creama": "tsx bin/creama.ts",
     "mcp": "tsx bin/creama.ts mcp",
+    "worker": "tsx bin/worker.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:e2e": "playwright test",

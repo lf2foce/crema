@@ -236,13 +236,9 @@ export class Creama {
     if (running?.status === "running") return running.id;
     if (!modelConfigured()) throw new CreamaError("No model configured. Set GEMINI_API_KEY and restart.", 409);
     await this.warehouse();
-    const runId = await this.reg.createRun(source.id, modelName(), opts.hint ?? null, opts.focus ?? null);
-    await this.ev(opts.actor ?? "anonymous", opts.focus ? "discovery.asked" : "discovery.started", `run:${runId}`, { hint: opts.hint, focus: opts.focus });
-    void this.discover(runId, opts).catch(async (e) => {
-      await this.reg.appendStep(runId, { kind: "error", text: (e as Error).message }).catch(() => {});
-      await this.reg.updateRun(runId, { status: "failed", error: (e as Error).message }).catch(() => {});
-    });
-    return runId;
+    const { enqueueDiscovery } = await import("./jobs");
+    return enqueueDiscovery(this.reg, { workspaceId: this.scope.workspaceId, sourceId: source.id,
+      model: modelName(), hint: opts.hint ?? null, focus: opts.focus ?? null, actor: opts.actor ?? "anonymous" });
   }
 
   async discover(runId: number, opts: { hint?: string | null; focus?: string | null } = {}) {
@@ -328,6 +324,9 @@ export class Creama {
   }
 
   async run(id: number) {
+    const { reconcileRun } = await import("./jobs");
+    await this.reg.db.ready;
+    await reconcileRun(this.reg, this.src().id, id);
     const r = await this.reg.run(this.src().id, id);
     if (!r) throw new CreamaError("Run not found.", 404);
     return r;

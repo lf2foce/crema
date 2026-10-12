@@ -56,25 +56,8 @@ async function main() {
     }
     case "discover": {
       const src = await pick();
-      const id = await src.reg.createRun(src.src().id, (await import("../core/model")).modelName(), flags.hint ?? null, flags.focus ?? null);
-      let seen = 0;
-      const timer = setInterval(async () => {
-        const steps = (await src.reg.run(src.src().id, id))!.steps;
-        for (; seen < steps.length; seen++) {
-          const s = steps[seen];
-          out(s.kind === "step" ? `\n● ${s.text}` : s.kind === "found" ? `  + ${s.text}` : `  ${s.text}`);
-        }
-      }, 200);
-      try {
-        await src.discover(id, { hint: flags.hint, focus: flags.focus });
-      } catch (e) {
-        await src.reg.updateRun(id, { status: "failed", error: (e as Error).message });
-        throw e;
-      } finally {
-        await new Promise((ok) => setTimeout(ok, 250));
-        clearInterval(timer);
-      }
-      out(`\nReview and certify in the web app: pnpm start → http://localhost:3300`);
+      const id = await src.startDiscovery({ hint: flags.hint, focus: flags.focus, actor: process.env.USER ?? "cli" });
+      out(`Discovery ${id} queued durably. Run pnpm worker in another terminal, then review progress and certify in the web app.`);
       return;
     }
     case "list": {
@@ -119,9 +102,10 @@ async function mcp() {
 
 try {
   await main();
-  if (cmd !== "mcp") { await closePools(); await closeDatabases(); }
+  if (cmd !== "mcp") { await (await import("../core/jobs")).closeJobs(); await closePools(); await closeDatabases(); }
 } catch (e) {
   process.stderr.write(`${e instanceof CreamaError ? "" : "Error: "}${(e as Error).message}\n`);
+  await (await import("../core/jobs")).closeJobs();
   await closePools();
   await closeDatabases();
   process.exit(1);

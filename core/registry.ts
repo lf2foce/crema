@@ -175,7 +175,7 @@ export class Registry {
   }
   /** A process that died mid-discovery leaves a run 'running' forever; close those out. */
   async failStaleRuns(reason: string) {
-    const running = await this.q<{ id: number; pid: number | null }>("SELECT id, pid FROM runs WHERE status = 'running'");
+    const running = await this.q<{ id: number; pid: number | null }>("SELECT id, pid FROM runs WHERE status = 'running' AND queue_job_id IS NULL");
     for (const r of running) {
       if (r.pid && r.pid !== process.pid && alive(r.pid)) continue;
       await this.q("UPDATE runs SET status = 'failed', error = $1, finished_at = now() WHERE id = $2", [reason, r.id]);

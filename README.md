@@ -23,6 +23,8 @@ cp .env.example .env.local        # GEMINI_API_KEY, BETTER_AUTH_SECRET, DATABASE
 createdb creama                   # Creama's state; tables are created on first start
 pnpm demo:db                      # creates the "Lumen" demo SaaS database + a read-only role
 pnpm build && pnpm start          # http://localhost:3300
+# In a separate terminal/service (required for discovery):
+pnpm worker
 ```
 
 The first person to open it creates the admin account; after that Creama is invite-only (admins add people under their name in the status bar). Email + password, or Google for invited emails when `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` are set.
@@ -116,7 +118,15 @@ by migration. Do not retry those imported records blindly: their existing databa
 
 ## Architecture
 
-One Next.js process and one Postgres database for state. The domain lives in `core/` and knows nothing about Next; the web app, REST API, CLI and MCP servers are thin adapters over `core/service.ts`.
+One Next.js web process, one independently supervised discovery worker and one Postgres database for state.
+Run `pnpm db:migrate` before production web/worker startup. Discovery jobs and run records are committed
+together; deploy/restart of the web does not discard them. The worker uses pg-boss with two retries,
+backoff, a 60-second heartbeat and a 30-minute attempt expiration. A crashed attempt restarts discovery,
+not the interrupted Gemini request; it may incur another model charge. A completed run is not executed again
+if the worker dies before acknowledging the queue job. Reviewable open proposals from a rerun supersede
+the earlier proposals; certified versions remain immutable. Deploy the worker as a supervised service,
+not a request handler. Without it jobs remain queued. This does not provide exactly-once external model calls.
+The domain lives in `core/` and knows nothing about Next; adapters stay thin.
 
 ```
 core/warehouse.ts   read-only executor + the metric SQL contract ({{start}} {{end}} {{at}})
@@ -128,6 +138,8 @@ core/db.ts          Postgres pool + append-only SQL migrations (no ORM)
 core/registry.ts    runs, proposals, immutable versions, audit log, saved queries
 core/explore.ts     SQL editor + table browser (read-only)
 core/hosting.ts     hosted databases: create, isolate, rotate passwords, drop
+core/sqlGuard.ts    fail-closed AST validation of user analytics SQL
+core/jobs.ts        transactional pg-boss enqueue, recovery and discovery worker
 core/mcpTools.ts    the MCP tools, shared by stdio and HTTP
 lib/auth.ts         Better Auth: sign-in, invitations, OAuth server for MCP
 core/service.ts     the application API

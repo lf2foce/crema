@@ -73,7 +73,7 @@ suite("step 1 safety regressions", () => {
         INSERT INTO events (actor, action, subject) VALUES ('Ana','metric.certified','metric:orders');
         INSERT INTO hosted_databases(name, db_name, created_by) VALUES ('Old app','app_old','Ana')`);
       const body = (await pool.query("SELECT body FROM metric_versions")).rows[0].body;
-      expect(await migrate(pool)).toEqual(["001_init"]);
+      expect(await migrate(pool)).toEqual(["001_init", "002_jobs"]);
       expect(await migrate(pool)).toEqual([]);
       expect((await pool.query("SELECT body FROM metric_versions")).rows[0].body).toEqual(body);
       const row = (await pool.query("SELECT connection FROM sources WHERE slug = 'legacy'")).rows[0];
