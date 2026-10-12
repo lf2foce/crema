@@ -1,16 +1,21 @@
-// The registry is the only writer of state: Postgres (see db.ts), append-only versions,
-// an audit event for every state change.
+// The registry is the only writer of state: Postgres (see db.ts), append-only versions, an audit
+// event for every state change. Everything analytical is scoped to a source; sources to a workspace.
 import type pg from "pg";
 import { database, type Db } from "./db";
 import type {
   AuditEvent, Candidate, CandidateSpec, Comparison, Concept, ConceptSpec, EntityReading,
-  HostedDatabase, Metric, MetricVersion, Run, RunStep, SavedQuery, Verification,
+  Metric, MetricStatus, MetricVersion, Run, RunStep, SavedQuery, Source, Verification,
 } from "./types";
 
 type Q = Pick<pg.PoolClient, "query">;
 const iso = (v: unknown): string => (v instanceof Date ? v.toISOString() : String(v));
 const isoOrNull = (v: unknown): string | null => (v == null ? null : iso(v));
 const json = (v: unknown) => (v === undefined ? null : JSON.stringify(v));
+
+export const DEFAULT_WORKSPACE = "default";
+
+/** Sealed secrets of a source (core/secret.ts); never part of `Source`. */
+export type SourceSecrets = { connection: string | null; ownerPassword: string | null; readerPassword: string | null };
 
 export class Registry {
   constructor(readonly url?: string, readonly opts: { schema?: string } = {}) {
@@ -22,7 +27,6 @@ export class Registry {
     return database(this.url, this.opts.schema);
   }
 
-  /** Every call waits for migrations once, then runs on the shared pool. */
   private async q<R extends pg.QueryResultRow = any>(text: string, values: unknown[] = []): Promise<R[]> {
     await this.db.ready;
     return (await this.db.pool.query<R>(text, values)).rows;
@@ -44,7 +48,7 @@ export class Registry {
     }
   }
 
-  // ---------- settings ----------
+  // ---------- settings (instance-wide) ----------
   async getSetting(key: string): Promise<string | null> {
     return (await this.q<{ value: string }>("SELECT value FROM settings WHERE key = $1", [key]))[0]?.value ?? null;
   }
@@ -54,72 +58,94 @@ export class Registry {
   }
 
   // ---------- audit ----------
-  async event(actor: string, action: string, subject: string, detail?: unknown, c?: Q) {
-    const sql = "INSERT INTO events (actor, action, subject, detail) VALUES ($1, $2, $3, $4)";
-    if (c) await c.query(sql, [actor, action, subject, json(detail)]);
-    else await this.q(sql, [actor, action, subject, json(detail)]);
+  async event(scope: { workspaceId: string; sourceId?: number | null }, actor: string, action: string, subject: string, detail?: unknown, c?: Q) {
+    const sql = "INSERT INTO events (workspace_id, source_id, actor, action, subject, detail) VALUES ($1, $2, $3, $4, $5, $6)";
+    const vals = [scope.workspaceId, scope.sourceId ?? null, actor, action, subject, json(detail)];
+    if (c) await c.query(sql, vals); else await this.q(sql, vals);
   }
-  async events(limit = 100, subject?: string): Promise<AuditEvent[]> {
-    const rows = subject
-      ? await this.q("SELECT * FROM events WHERE subject = $1 ORDER BY id DESC LIMIT $2", [subject, limit])
-      : await this.q("SELECT * FROM events ORDER BY id DESC LIMIT $1", [limit]);
+  async events(workspaceId: string, opts: { limit?: number; subject?: string; sourceId?: number } = {}): Promise<AuditEvent[]> {
+    const where = ["workspace_id = $1"], vals: unknown[] = [workspaceId];
+    if (opts.subject) { vals.push(opts.subject); where.push(`subject = $${vals.length}`); }
+    if (opts.sourceId) { vals.push(opts.sourceId); where.push(`source_id = $${vals.length}`); }
+    vals.push(opts.limit ?? 100);
+    const rows = await this.q(`SELECT * FROM events WHERE ${where.join(" AND ")} ORDER BY id DESC LIMIT $${vals.length}`, vals);
     return rows.map((r) => ({ id: r.id, at: iso(r.at), actor: r.actor, action: r.action, subject: r.subject, detail: r.detail ?? null }));
   }
 
+  // ---------- sources ----------
+  private toSource(r: any): Source {
+    return {
+      id: r.id, workspaceId: r.workspace_id, slug: r.slug, name: r.name, kind: r.kind, status: r.status, error: r.error,
+      readOnly: r.read_only, writableTables: r.writable_tables, dbName: r.db_name, createdBy: r.created_by, createdAt: iso(r.created_at),
+    };
+  }
+  async sources(workspaceId: string): Promise<Source[]> {
+    return (await this.q("SELECT * FROM sources WHERE workspace_id = $1 AND deleted_at IS NULL ORDER BY id", [workspaceId])).map((r) => this.toSource(r));
+  }
+  async source(workspaceId: string, idOrSlug: number | string): Promise<Source | null> {
+    const byId = typeof idOrSlug === "number" || /^\d+$/.test(String(idOrSlug));
+    const r = (await this.q(`SELECT * FROM sources WHERE workspace_id = $1 AND deleted_at IS NULL AND ${byId ? "id = $2" : "slug = $2"}`, [workspaceId, byId ? Number(idOrSlug) : idOrSlug]))[0];
+    return r ? this.toSource(r) : null;
+  }
+  async sourceSecrets(id: number): Promise<SourceSecrets> {
+    const r = (await this.q("SELECT connection, owner_password, reader_password FROM sources WHERE id = $1", [id]))[0];
+    return { connection: r?.connection ?? null, ownerPassword: r?.owner_password ?? null, readerPassword: r?.reader_password ?? null };
+  }
+  /** A unique slug in the workspace: `name`, then `name_2`, … */
+  async freeSlug(workspaceId: string, base: string): Promise<string> {
+    const taken = new Set((await this.q<{ slug: string }>("SELECT slug FROM sources WHERE workspace_id = $1 AND deleted_at IS NULL", [workspaceId])).map((r) => r.slug));
+    let slug = base, n = 1;
+    while (taken.has(slug)) slug = `${base}_${++n}`;
+    return slug;
+  }
+  async addSource(workspaceId: string, s: { slug: string; name: string; kind: Source["kind"]; status?: Source["status"]; connection?: string | null; readOnly?: boolean; writableTables?: number; dbName?: string | null }, actor: string): Promise<Source> {
+    return this.tx(async (c) => {
+      const r = (await c.query(
+        `INSERT INTO sources (workspace_id, slug, name, kind, status, connection, read_only, writable_tables, db_name, created_by)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
+        [workspaceId, s.slug, s.name, s.kind, s.status ?? "ready", s.connection ?? null, s.readOnly ?? false, s.writableTables ?? 0, s.dbName ?? null, actor])).rows[0];
+      await this.event({ workspaceId, sourceId: r.id }, actor, `source.${s.kind === "hosted" ? "provisioning" : "connected"}`, `source:${r.slug}`, { name: s.name, dbName: s.dbName ?? null }, c);
+      return this.toSource(r);
+    });
+  }
+  async updateSource(id: number, patch: Partial<{ status: Source["status"]; error: string | null; connection: string; readOnly: boolean; writableTables: number; ownerPassword: string; readerPassword: string; name: string }>) {
+    const cols: Record<string, string> = { status: "status", error: "error", connection: "connection", readOnly: "read_only", writableTables: "writable_tables", ownerPassword: "owner_password", readerPassword: "reader_password", name: "name" };
+    const sets: string[] = [], vals: unknown[] = [];
+    for (const [k, v] of Object.entries(patch)) { if (v === undefined) continue; vals.push(v); sets.push(`${cols[k]} = $${vals.length}`); }
+    if (sets.length) await this.q(`UPDATE sources SET ${sets.join(", ")} WHERE id = $${vals.length + 1}`, [...vals, id]);
+  }
+  /** Soft delete: history (versions, audit) stays; the slug and hosted db name become free again. */
+  async removeSource(source: Source, actor: string) {
+    await this.tx(async (c) => {
+      await c.query("UPDATE sources SET deleted_at = now(), slug = slug || '#' || id, db_name = CASE WHEN db_name IS NULL THEN NULL ELSE db_name || '#' || id END WHERE id = $1", [source.id]);
+      await this.event({ workspaceId: source.workspaceId, sourceId: source.id }, actor, "source.removed", `source:${source.slug}`, { name: source.name, kind: source.kind }, c);
+    });
+  }
+
   // ---------- saved queries (the SQL editor's notebook) ----------
-  async queries(): Promise<SavedQuery[]> {
-    return (await this.q("SELECT * FROM saved_queries ORDER BY updated_at DESC"))
+  async queries(sourceId: number): Promise<SavedQuery[]> {
+    return (await this.q("SELECT * FROM saved_queries WHERE source_id = $1 ORDER BY updated_at DESC", [sourceId]))
       .map((r) => ({ id: r.id, name: r.name, sql: r.sql, createdBy: r.created_by, createdAt: iso(r.created_at), updatedAt: iso(r.updated_at) }));
   }
-  async saveQuery(input: { id?: number | null; name: string; sql: string }, actor: string): Promise<SavedQuery> {
+  async saveQuery(source: Source, input: { id?: number | null; name: string; sql: string }, actor: string): Promise<SavedQuery> {
     const id = await this.tx(async (c) => {
       let id: number | null = null;
-      if (input.id != null) id = (await c.query("UPDATE saved_queries SET name = $1, sql = $2, updated_at = now() WHERE id = $3 RETURNING id", [input.name, input.sql, input.id])).rows[0]?.id ?? null;
-      if (id == null) id = (await c.query("INSERT INTO saved_queries (name, sql, created_by) VALUES ($1, $2, $3) RETURNING id", [input.name, input.sql, actor])).rows[0].id as number;
-      await this.event(actor, "query.saved", `query:${id}`, { name: input.name }, c);
+      if (input.id != null) id = (await c.query("UPDATE saved_queries SET name = $1, sql = $2, updated_at = now() WHERE id = $3 AND source_id = $4 RETURNING id", [input.name, input.sql, input.id, source.id])).rows[0]?.id ?? null;
+      if (id == null) id = (await c.query("INSERT INTO saved_queries (source_id, name, sql, created_by) VALUES ($1, $2, $3, $4) RETURNING id", [source.id, input.name, input.sql, actor])).rows[0].id as number;
+      await this.event({ workspaceId: source.workspaceId, sourceId: source.id }, actor, "query.saved", `query:${id}`, { name: input.name }, c);
       return id;
     });
-    return (await this.queries()).find((x) => x.id === id)!;
+    return (await this.queries(source.id)).find((x) => x.id === id)!;
   }
-  async deleteQuery(id: number, actor: string) {
-    const rows = await this.q("DELETE FROM saved_queries WHERE id = $1 RETURNING id", [id]);
-    if (rows.length) await this.event(actor, "query.deleted", `query:${id}`);
+  async deleteQuery(source: Source, id: number, actor: string) {
+    const rows = await this.q("DELETE FROM saved_queries WHERE id = $1 AND source_id = $2 RETURNING id", [id, source.id]);
+    if (rows.length) await this.event({ workspaceId: source.workspaceId, sourceId: source.id }, actor, "query.deleted", `query:${id}`);
     return { deleted: rows.length };
   }
 
-  // ---------- hosted databases ----------
-  async hostedDatabases(): Promise<HostedDatabase[]> {
-    return (await this.q("SELECT * FROM hosted_databases WHERE deleted_at IS NULL ORDER BY id"))
-      .map((r) => ({ id: r.id, name: r.name, dbName: r.db_name, createdBy: r.created_by, createdAt: iso(r.created_at) }));
-  }
-  async hostedDatabase(id: number): Promise<HostedDatabase | null> {
-    return (await this.hostedDatabases()).find((h) => h.id === id) ?? null;
-  }
-  async addHostedDatabase(name: string, dbName: string, actor: string, sealed: { owner: string; reader: string }): Promise<number> {
-    return this.tx(async (c) => {
-      const id = (await c.query("INSERT INTO hosted_databases (name, db_name, created_by, owner_password, reader_password) VALUES ($1, $2, $3, $4, $5) RETURNING id", [name, dbName, actor, sealed.owner, sealed.reader])).rows[0].id as number;
-      await this.event(actor, "hosting.created", `hosted:${dbName}`, { name }, c);
-      return id;
-    });
-  }
-  /** Sealed passwords (core/secret.ts) — never returned by the listing. */
-  async hostedPasswords(id: number): Promise<{ owner: string | null; reader: string | null }> {
-    const r = (await this.q("SELECT owner_password, reader_password FROM hosted_databases WHERE id = $1 AND deleted_at IS NULL", [id]))[0];
-    return { owner: r?.owner_password ?? null, reader: r?.reader_password ?? null };
-  }
-  async setHostedPassword(id: number, which: "owner" | "reader", sealed: string) {
-    await this.q(`UPDATE hosted_databases SET ${which === "owner" ? "owner_password" : "reader_password"} = $1 WHERE id = $2`, [sealed, id]);
-  }
-  async removeHostedDatabase(id: number, actor: string) {
-    await this.tx(async (c) => {
-      const r = (await c.query("UPDATE hosted_databases SET deleted_at = now(), db_name = db_name || '#deleted-' || id WHERE id = $1 AND deleted_at IS NULL RETURNING name, db_name", [id])).rows[0];
-      if (r) await this.event(actor, "hosting.deleted", `hosted:${String(r.db_name).split("#")[0]}`, { name: r.name }, c);
-    });
-  }
-
   // ---------- runs ----------
-  async createRun(model: string, hint: string | null, focus: string | null): Promise<number> {
-    return (await this.q("INSERT INTO runs (status, model, hint, focus, pid) VALUES ('running', $1, $2, $3, $4) RETURNING id", [model, hint, focus, process.pid]))[0].id;
+  async createRun(sourceId: number, model: string, hint: string | null, focus: string | null): Promise<number> {
+    return (await this.q("INSERT INTO runs (source_id, status, model, hint, focus, pid) VALUES ($1, 'running', $2, $3, $4, $5) RETURNING id", [sourceId, model, hint, focus, process.pid]))[0].id;
   }
   async appendStep(runId: number, step: Omit<RunStep, "at">) {
     // jsonb append in place: concurrent steps can't overwrite each other
@@ -136,12 +162,12 @@ export class Registry {
     if (patch.snapshot !== undefined) set("snapshot", json(patch.snapshot));
     if (sets.length) await this.q(`UPDATE runs SET ${sets.join(", ")} WHERE id = $${vals.length + 1}`, [...vals, runId]);
   }
-  async run(id: number): Promise<Run | null> {
-    const r = (await this.q("SELECT id, status, started_at, finished_at, model, hint, steps, summary, entities, sent_to_model, error FROM runs WHERE id = $1", [id]))[0];
+  async run(sourceId: number, id: number): Promise<Run | null> {
+    const r = (await this.q("SELECT id, source_id, status, started_at, finished_at, model, hint, steps, summary, entities, sent_to_model, error FROM runs WHERE id = $1 AND source_id = $2", [id, sourceId]))[0];
     return r ? toRun(r) : null;
   }
-  async latestRun(opts: { withSummary?: boolean } = {}): Promise<Run | null> {
-    const r = (await this.q(`SELECT id, status, started_at, finished_at, model, hint, steps, summary, entities, NULL AS sent_to_model, error FROM runs ${opts.withSummary ? "WHERE summary IS NOT NULL" : ""} ORDER BY id DESC LIMIT 1`))[0];
+  async latestRun(sourceId: number, opts: { withSummary?: boolean } = {}): Promise<Run | null> {
+    const r = (await this.q(`SELECT id, source_id, status, started_at, finished_at, model, hint, steps, summary, entities, NULL AS sent_to_model, error FROM runs WHERE source_id = $1 ${opts.withSummary ? "AND summary IS NOT NULL" : ""} ORDER BY id DESC LIMIT 1`, [sourceId]))[0];
     return r ? toRun(r) : null;
   }
   async runSnapshot<T>(id: number): Promise<T | null> {
@@ -157,12 +183,12 @@ export class Registry {
   }
 
   // ---------- proposals ----------
-  async saveConcept(runId: number, spec: ConceptSpec, verifications: (Verification | null)[], comparison: Comparison | null): Promise<number> {
+  async saveConcept(sourceId: number, runId: number, spec: ConceptSpec, verifications: (Verification | null)[], comparison: Comparison | null): Promise<number> {
     return this.tx(async (c) => {
-      // a re-discovery replaces the still-open proposal for the same key
-      await c.query("UPDATE concepts SET status = 'superseded' WHERE key = $1 AND status = 'open'", [spec.key]);
-      const id = (await c.query("INSERT INTO concepts (run_id, key, name, question, comparison) VALUES ($1, $2, $3, $4, $5) RETURNING id",
-        [runId, spec.key, spec.name, spec.question, json(comparison ?? undefined)])).rows[0].id as number;
+      // a re-discovery replaces the still-open proposal for the same key in the same source
+      await c.query("UPDATE concepts SET status = 'superseded' WHERE source_id = $1 AND key = $2 AND status = 'open'", [sourceId, spec.key]);
+      const id = (await c.query("INSERT INTO concepts (source_id, run_id, key, name, question, comparison) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id",
+        [sourceId, runId, spec.key, spec.name, spec.question, json(comparison ?? undefined)])).rows[0].id as number;
       for (const [i, cand] of spec.candidates.entries()) {
         await c.query("INSERT INTO candidates (concept_id, position, spec, verification) VALUES ($1, $2, $3, $4)", [id, i, json(cand), json(verifications[i] ?? undefined)]);
       }
@@ -172,11 +198,11 @@ export class Registry {
   async setComparison(conceptId: number, comparison: Comparison) {
     await this.q("UPDATE concepts SET comparison = $1 WHERE id = $2", [json(comparison), conceptId]);
   }
-  async concept(id: number): Promise<Concept | null> {
-    return (await this.loadConcepts("WHERE id = $1", [id]))[0] ?? null;
+  async concept(sourceId: number, id: number): Promise<Concept | null> {
+    return (await this.loadConcepts("WHERE source_id = $1 AND id = $2", [sourceId, id]))[0] ?? null;
   }
-  async concepts(statuses: string[] = ["open", "dismissed"]): Promise<Concept[]> {
-    return this.loadConcepts("WHERE status = ANY($1) ORDER BY id", [statuses]);
+  async concepts(sourceId: number, statuses: string[] = ["open", "rejected"]): Promise<Concept[]> {
+    return this.loadConcepts("WHERE source_id = $1 AND status = ANY($2) ORDER BY id", [sourceId, statuses]);
   }
   async setConceptStatus(id: number, status: string, metricKey: string | null = null, c?: Q) {
     const sql = "UPDATE concepts SET status = $1, metric_key = coalesce($2, metric_key) WHERE id = $3";
@@ -189,51 +215,66 @@ export class Registry {
     if (!rows.length) return [];
     const cands = await this.q("SELECT * FROM candidates WHERE concept_id = ANY($1) ORDER BY concept_id, position", [rows.map((r) => r.id)]);
     return rows.map((r) => ({
-      id: r.id, runId: r.run_id, key: r.key, name: r.name, question: r.question, status: r.status,
+      id: r.id, sourceId: r.source_id, runId: r.run_id, key: r.key, name: r.name, question: r.question, status: r.status,
       comparison: r.comparison ?? null, metricKey: r.metric_key, createdAt: iso(r.created_at),
       candidates: cands.filter((c) => c.concept_id === r.id).map((c): Candidate => ({ ...(c.spec as CandidateSpec), id: c.id, conceptId: r.id, verification: c.verification ?? null })),
     }));
   }
 
   // ---------- certified metrics ----------
-  async certify(v: Omit<MetricVersion, "version" | "certifiedAt">, owner: string, after?: (c: Q) => Promise<void>): Promise<MetricVersion> {
+  async certify(source: Source, v: Omit<MetricVersion, "version" | "certifiedAt">, owner: string, after?: (c: Q) => Promise<void>): Promise<MetricVersion> {
     return this.tx(async (c) => {
       // the row lock serialises two people certifying the same key at once
-      const existing = (await c.query("SELECT current_version FROM metrics WHERE key = $1 FOR UPDATE", [v.metricKey])).rows[0] as { current_version: number } | undefined;
+      const existing = (await c.query("SELECT id, current_version FROM metrics WHERE source_id = $1 AND key = $2 FOR UPDATE", [source.id, v.metricKey])).rows[0] as { id: number; current_version: number } | undefined;
       const version = (existing?.current_version ?? 0) + 1;
       const full: MetricVersion = { ...v, version, certifiedAt: new Date().toISOString() };
-      if (existing) await c.query("UPDATE metrics SET current_version = $1, name = $2, status = 'certified' WHERE key = $3", [version, v.name, v.metricKey]);
-      else await c.query("INSERT INTO metrics (key, name, status, owner, current_version) VALUES ($1, $2, 'certified', $3, $4)", [v.metricKey, v.name, owner, version]);
-      await c.query("INSERT INTO metric_versions (metric_key, version, body, certified_by, certified_at) VALUES ($1, $2, $3, $4, $5)", [v.metricKey, version, json(full), v.certifiedBy, full.certifiedAt]);
-      await this.event(v.certifiedBy, version === 1 ? "metric.certified" : "metric.revised", v.metricKey, { version, origin: v.origin, note: v.note, sql: v.sql }, c);
+      let metricId = existing?.id;
+      // a new version is a fresh certification: it clears "needs attention" and brings a deprecated metric back
+      if (existing) await c.query("UPDATE metrics SET current_version = $1, name = $2, status = 'certified', attention = NULL WHERE id = $3", [version, v.name, existing.id]);
+      else metricId = (await c.query("INSERT INTO metrics (source_id, key, name, status, owner, current_version) VALUES ($1, $2, $3, 'certified', $4, $5) RETURNING id", [source.id, v.metricKey, v.name, owner, version])).rows[0].id;
+      await c.query("INSERT INTO metric_versions (metric_id, version, body, certified_by, certified_at) VALUES ($1, $2, $3, $4, $5)", [metricId, version, json(full), v.certifiedBy, full.certifiedAt]);
+      await this.event({ workspaceId: source.workspaceId, sourceId: source.id }, v.certifiedBy, version === 1 ? "metric.certified" : "metric.revised", `metric:${source.slug}/${v.metricKey}`, { version, origin: v.origin, note: v.note, sql: v.sql }, c);
       if (after) await after(c); // e.g. close the proposal in the same transaction
       return full;
     });
   }
-  async setMetricStatus(key: string, status: "certified" | "retired") {
-    await this.q("UPDATE metrics SET status = $1 WHERE key = $2", [status, key]);
+  async setMetricStatus(metricId: number, status: MetricStatus, attention: string | null = null) {
+    await this.q("UPDATE metrics SET status = $1, attention = $2 WHERE id = $3", [status, attention, metricId]);
   }
-  async metric(key: string): Promise<Metric | null> {
-    return (await this.loadMetrics("WHERE m.key = $1", [key]))[0] ?? null;
+  async metric(sourceId: number, key: string): Promise<Metric | null> {
+    return (await this.loadMetrics("WHERE m.source_id = $1 AND m.key = $2", [sourceId, key]))[0] ?? null;
   }
-  async metrics(opts: { includeRetired?: boolean } = {}): Promise<Metric[]> {
-    return this.loadMetrics(`${opts.includeRetired ? "" : "WHERE m.status = 'certified'"} ORDER BY m.created_at`, []);
+  /** A source's metrics; deprecated ones only when asked for. */
+  async metrics(sourceId: number, opts: { includeDeprecated?: boolean } = {}): Promise<Metric[]> {
+    return this.loadMetrics(`WHERE m.source_id = $1 ${opts.includeDeprecated ? "" : "AND m.status <> 'deprecated'"} ORDER BY m.created_at`, [sourceId]);
   }
-  async version(key: string, version: number): Promise<MetricVersion | null> {
-    return ((await this.q("SELECT body FROM metric_versions WHERE metric_key = $1 AND version = $2", [key, version]))[0]?.body ?? null) as MetricVersion | null;
+  /** Every live metric in a workspace with its source's slug, for the consumer API and MCP. */
+  async workspaceMetrics(workspaceId: string): Promise<(Metric & { sourceSlug: string })[]> {
+    const rows = await this.q(`SELECT m.*, v.body, s.slug AS source_slug FROM metrics m
+      JOIN metric_versions v ON v.metric_id = m.id AND v.version = m.current_version
+      JOIN sources s ON s.id = m.source_id AND s.deleted_at IS NULL
+      WHERE s.workspace_id = $1 AND m.status <> 'deprecated' ORDER BY s.id, m.created_at`, [workspaceId]);
+    return rows.map((r) => ({ ...toMetric(r), sourceSlug: r.source_slug }));
   }
-  async versions(key: string): Promise<MetricVersion[]> {
-    return (await this.q("SELECT body FROM metric_versions WHERE metric_key = $1 ORDER BY version DESC", [key])).map((r) => r.body as MetricVersion);
+  async version(metricId: number, version: number): Promise<MetricVersion | null> {
+    return ((await this.q("SELECT body FROM metric_versions WHERE metric_id = $1 AND version = $2", [metricId, version]))[0]?.body ?? null) as MetricVersion | null;
+  }
+  async versions(metricId: number): Promise<MetricVersion[]> {
+    return (await this.q("SELECT body FROM metric_versions WHERE metric_id = $1 ORDER BY version DESC", [metricId])).map((r) => r.body as MetricVersion);
   }
   private async loadMetrics(where: string, values: unknown[]): Promise<Metric[]> {
-    const rows = await this.q(`SELECT m.*, v.body FROM metrics m JOIN metric_versions v ON v.metric_key = m.key AND v.version = m.current_version ${where}`, values);
-    return rows.map((r) => ({ key: r.key, name: r.name, status: r.status, owner: r.owner, currentVersion: r.current_version, createdAt: iso(r.created_at), current: r.body as MetricVersion }));
+    const rows = await this.q(`SELECT m.*, v.body FROM metrics m JOIN metric_versions v ON v.metric_id = m.id AND v.version = m.current_version ${where}`, values);
+    return rows.map(toMetric);
   }
+}
+
+function toMetric(r: any): Metric {
+  return { id: r.id, sourceId: r.source_id, key: r.key, name: r.name, status: r.status, attention: r.attention, owner: r.owner, currentVersion: r.current_version, createdAt: iso(r.created_at), current: r.body as MetricVersion };
 }
 
 function toRun(r: any): Run {
   return {
-    id: r.id, status: r.status, startedAt: iso(r.started_at), finishedAt: isoOrNull(r.finished_at), model: r.model, hint: r.hint,
+    id: r.id, sourceId: r.source_id, status: r.status, startedAt: iso(r.started_at), finishedAt: isoOrNull(r.finished_at), model: r.model, hint: r.hint,
     steps: r.steps ?? [], summary: r.summary, entities: r.entities ?? [], sentToModel: r.sent_to_model ?? null, error: r.error,
   };
 }

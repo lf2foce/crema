@@ -7,13 +7,14 @@ export const MCP_INSTRUCTIONS =
   "Creama serves business metrics whose definitions a named person has certified. " +
   "Use list_metrics to see what exists, then get_metric_values. Always report the number with its provenance " +
   "(\"v2, certified by …\"). If a metric the user asks about is not listed, say it has not been certified yet " +
-  "instead of estimating it another way. If trust is \"drifted\", warn that the schema changed since certification.";
+  "instead of estimating it another way. A metric that \"needs attention\" (its tables changed since certification) " +
+  "is not served: say so rather than computing it yourself.";
 
 export const MCP_TOOLS = [
   {
     name: "list_metrics",
     title: "List certified metrics",
-    description: "All certified business metrics: key, name, the question each answers, plain-language definition, unit, version and who certified it.",
+    description: "All certified business metrics across this workspace's databases: ref (\"database/metric\"), name, the question each answers, plain-language definition, unit, version and who certified it.",
     input: z.object({}),
     run: async (r: Creama) => (await r.listMetrics()).map(({ sql, latest, ...m }) => ({ ...m, latestValue: latest.value })),
   },
@@ -22,21 +23,21 @@ export const MCP_TOOLS = [
     title: "Get metric values",
     description: "Compute a certified metric. Without grain: one value for the period (flow metrics) or as of `to` (snapshot metrics). With grain: a time series.",
     input: z.object({
-      key: z.string().describe("Metric key from list_metrics"),
+      ref: z.string().describe("Metric ref from list_metrics, e.g. \"demo/mrr\""),
       from: z.string().optional().describe("ISO date, default 12 months ago"),
       to: z.string().optional().describe("ISO date, default now"),
       grain: z.enum(["day", "week", "month", "quarter", "year"]).optional(),
       version: z.number().int().optional().describe("Pin a certified version; default latest"),
     }),
-    run: (r: Creama, a: { key: string; from?: string; to?: string; grain?: "day" | "week" | "month" | "quarter" | "year"; version?: number }) =>
-      r.query(a.key, { from: a.from, to: a.to, grain: a.grain ?? null, version: a.version }),
+    run: (r: Creama, a: { ref: string; from?: string; to?: string; grain?: "day" | "week" | "month" | "quarter" | "year"; version?: number }) =>
+      r.query(a.ref, { from: a.from, to: a.to, grain: a.grain ?? null, version: a.version }),
   },
   {
     name: "explain_metric",
     title: "Explain a metric",
     description: "The exact certified definition (SQL), its version history and audit trail. Use when the user asks how a number is calculated.",
-    input: z.object({ key: z.string() }),
-    run: (r: Creama, a: { key: string }) => r.getMetric(a.key),
+    input: z.object({ ref: z.string().describe("Metric ref from list_metrics, e.g. \"demo/mrr\"") }),
+    run: (r: Creama, a: { ref: string }) => r.getMetric(a.ref),
   },
 ] as const;
 

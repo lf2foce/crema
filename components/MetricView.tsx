@@ -2,19 +2,21 @@
 import { useCallback, useEffect, useState } from "react";
 import { display } from "@/core/format";
 import type { MetricKind, MetricUnit, SeriesPoint } from "@/core/types";
-import { actor, ago, api, windowLabel, type AuditEvent, type Verification } from "@/lib/client";
+import { actor, ago, api, windowLabel, type AuditEvent, type Verification, sourceHref, type Source } from "@/lib/client";
 import { Checks, Code, LineChart } from "./ui";
 
 type Contract = {
   key: string; name: string; question: string; description: string; kind: MetricKind; unit: MetricUnit; version: number;
   certifiedBy: string; certifiedAt: string; owner: string; origin: string; sql: string; dependsOn: string[];
+  status: "certified" | "needs_attention" | "deprecated"; attention: string | null;
   latest: { value: number | null; series: SeriesPoint[] };
   history: { version: number; certifiedBy: string; certifiedAt: string; note: string | null; origin: string; sql: string; description: string }[];
   events: AuditEvent[];
 };
-type Values = { trust: "certified" | "drifted"; drift: string | null; version: number; points?: SeriesPoint[]; value?: number | null; unit: MetricUnit };
+type Values = { version: number; points?: SeriesPoint[]; value?: number | null; unit: MetricUnit };
 
-export function MetricView({ metricKey, back, notify, reload, cwd, tokenRequired }: { metricKey: string; back: () => void; notify: (t: string, e?: boolean) => void; reload: () => void; cwd: string; tokenRequired: boolean }) {
+export function MetricView({ source, metricKey, back, notify, reload, cwd, tokenRequired }: { source: Source; metricKey: string; back: () => void; notify: (t: string, e?: boolean) => void; reload: () => void; cwd: string; tokenRequired: boolean }) {
+  const ref = `${encodeURIComponent(source.slug)}/${encodeURIComponent(metricKey)}`;
   const [m, setM] = useState<Contract | null>(null);
   const [grain, setGrain] = useState<"week" | "month" | "quarter">("month");
   const [series, setSeries] = useState<Values | null>(null);
@@ -24,8 +26,8 @@ export function MetricView({ metricKey, back, notify, reload, cwd, tokenRequired
   const [revising, setRevising] = useState(false);
 
   const load = useCallback(async () => {
-    try { setM(await api<Contract>(`/api/v1/metrics/${metricKey}`)); } catch (e) { setErr((e as Error).message); }
-  }, [metricKey]);
+    try { setM(await api<Contract>(`/api/v1/metrics/${ref}`)); } catch (e) { setErr((e as Error).message); }
+  }, [ref]);
   useEffect(() => { load(); }, [load]);
 
   useEffect(() => {
@@ -33,22 +35,24 @@ export function MetricView({ metricKey, back, notify, reload, cwd, tokenRequired
     const to = new Date();
     const back = grain === "week" ? 26 * 7 : grain === "month" ? 365 : 730;
     const from = new Date(to.getTime() - back * 86_400_000).toISOString().slice(0, 10);
-    api<Values>(`/api/v1/metrics/${metricKey}/values?grain=${grain}&from=${from}`).then(setSeries).catch((e) => setErr(e.message));
+    // the server refuses to serve values while the metric needs attention, and says why
+    const failed = (e: Error) => { setErr(e.message); if (/needs attention/.test(e.message)) load(); };
+    api<Values>(`/api/v1/metrics/${ref}/values?grain=${grain}&from=${from}`).then(setSeries).catch(failed);
     const q = m.kind === "flow" ? `?from=${new Date(to.getTime() - 30 * 86_400_000).toISOString()}` : "";
-    api<Values>(`/api/v1/metrics/${metricKey}/values${q}`).then(setNow).catch((e) => setErr(e.message));
-  }, [m, grain, metricKey]);
+    api<Values>(`/api/v1/metrics/${ref}/values${q}`).then(setNow).catch(failed);
+  }, [m, grain, ref]);
 
   if (err && !m) return <div className="page"><a className="crumb" href="#">← Metrics</a><p className="muted">{err}</p></div>;
   if (!m) return <div className="page"><span className="spin" /></div>;
 
   const origin = typeof window !== "undefined" ? window.location.origin : "http://localhost:3300";
-  const rest = `curl -s "${origin}/api/v1/metrics/${m.key}/values?grain=month&from=2026-01-01" \\\n  -H "Authorization: Bearer $CREAMA_API_TOKEN"`;
+  const rest = `curl -s "${origin}/api/v1/metrics/${ref}/values?grain=month&from=2026-01-01" \\\n  -H "Authorization: Bearer $CREAMA_API_TOKEN"`;
   const mcpUrl = `${origin}/api/mcp`;
   const mcpLocal = JSON.stringify({ mcpServers: { creama: { command: "npx", args: ["tsx", `${cwd}/bin/creama.ts`, "mcp"] } } }, null, 2);
-  const cli = `npx tsx bin/creama.ts query ${m.key} --grain month --from 2026-01-01`;
+  const cli = `npx tsx bin/creama.ts query ${ref} --grain month --from 2026-01-01`;
 
-  const link = `${origin}/#m/${encodeURIComponent(m.key)}`;
-  const sheet = `=IMPORTDATA("${origin}/api/v1/metrics/${m.key}/values?grain=month&format=csv&token=YOUR_API_TOKEN")`;
+  const link = `${origin}${sourceHref(source.slug, `m/${encodeURIComponent(m.key)}`)}`;
+  const sheet = `=IMPORTDATA("${origin}/api/v1/metrics/${ref}/values?grain=month&format=csv&token=YOUR_API_TOKEN")`;
   const me = actor.get();
   const who = (name: string) => (me && name === me ? "you" : name);
   const date = (iso: string) => new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
@@ -66,12 +70,15 @@ export function MetricView({ metricKey, back, notify, reload, cwd, tokenRequired
         <h1 className="title">{m.name}</h1>
         <p className="sentence">{m.description}</p>
 
-        {(series?.trust === "drifted" || now?.trust === "drifted") && (
-          <div className="callout warn small mb-4"><b>Schema drift.</b> {series?.drift ?? now?.drift} Consumers receive <span className="mono">trust: "drifted"</span> until someone revises it.</div>
+        {m.status === "needs_attention" && (
+          <div className="callout warn attention mb-4">
+            <div className="grow"><b>Needs attention — not served.</b> {m.attention} Every channel (API, MCP, spreadsheet) refuses it until a person checks the definition still holds and re-certifies it.</div>
+            {!revising && <button className="btn sm" onClick={() => setRevising(true)}>Re-certify</button>}
+          </div>
         )}
 
         <div className="value-line">
-          <span className="value-hero num">{now ? display(now.value ?? null, m.unit, { compact: false }) : <span className="spin" />}</span>
+          <span className="value-hero num">{m.status === "needs_attention" ? "—" : now ? display(now.value ?? null, m.unit, { compact: false }) : <span className="spin" />}</span>
           <span className="muted">{period}</span>
         </div>
 
@@ -81,7 +88,7 @@ export function MetricView({ metricKey, back, notify, reload, cwd, tokenRequired
             <span className="grow" />
             <div className="seg">{(["week", "month", "quarter"] as const).map((g) => <button key={g} className={grain === g ? "on" : ""} onClick={() => setGrain(g)}>{g}</button>)}</div>
           </div>
-          {series?.points ? <LineChart lines={[{ label: m.name, series: series.points, color: "var(--s0)" }]} unit={m.unit} height={160} /> : <div className="chart-wait"><span className="spin" /></div>}
+          {m.status === "needs_attention" ? <div className="chart-wait faint">Not served while it needs attention.</div> : series?.points ? <LineChart lines={[{ label: m.name, series: series.points, color: "var(--s0)" }]} unit={m.unit} height={160} /> : <div className="chart-wait"><span className="spin" /></div>}
         </div>
 
         <div className="history">
@@ -93,7 +100,7 @@ export function MetricView({ metricKey, back, notify, reload, cwd, tokenRequired
             ))}
             <li><b>draft</b> · {draftLine}</li>
           </ul>
-          <p className="faint small m-0">If the tables behind this change, every channel marks it “drifted” until someone revises it.</p>
+          <p className="faint small m-0">If the tables behind this change, it stops being served (“needs attention”) until someone re-certifies it.</p>
           <div className="hist-actions">
             {!revising && <button className="linkish" onClick={() => setRevising(true)}>Revise definition</button>}
             <details>
@@ -103,10 +110,10 @@ export function MetricView({ metricKey, back, notify, reload, cwd, tokenRequired
               </ul>
             </details>
             <button className="linkish danger" onClick={async () => {
-              const reason = window.prompt(`Retire ${m.name}? Consumers will stop receiving it. Reason:`);
+              const reason = window.prompt(`Deprecate ${m.name}? Consumers will stop receiving it. Reason:`);
               if (reason === null) return;
-              try { await api(`/api/metrics/${m.key}/retire`, { body: { reason } }); notify(`Retired ${m.name}.`); reload(); back(); } catch (e) { notify((e as Error).message, true); }
-            }}>Retire</button>
+              try { await api(`/api/metrics/${m.key}/deprecate`, { body: { reason } }); notify(`Deprecated ${m.name}.`); reload(); back(); } catch (e) { notify((e as Error).message, true); }
+            }}>Deprecate</button>
           </div>
         </div>
       </main>

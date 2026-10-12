@@ -8,7 +8,7 @@ export default defineConfig({
   expect: { timeout: 15_000 },
   use: { baseURL: "http://localhost:3210", viewport: { width: 1440, height: 1000 } },
   webServer: {
-    command: "dropdb --if-exists creama_e2e && createdb creama_e2e && next start --port 3210",
+    command: "dropdb --if-exists creama_e2e && createdb creama_e2e && DATABASE_URL=postgresql://localhost:5432/creama_e2e tsx bin/migrate.ts && next start --port 3210",
     url: "http://localhost:3210/api/state",
     reuseExistingServer: false,
     env: { DATABASE_URL: "postgresql://localhost:5432/creama_e2e", APP_URL: "http://localhost:3210" },

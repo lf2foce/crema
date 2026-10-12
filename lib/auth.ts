@@ -1,9 +1,9 @@
 // Who is signed in, and the OAuth server MCP clients (Claude, ChatGPT, Cursor…) authorise against.
 // People: email + password, or Google when configured. The first account becomes the admin;
 // after that, accounts exist only when an admin invites them (Google signs in invited emails).
+import { randomUUID, timingSafeEqual } from "node:crypto";
 import { betterAuth, APIError } from "better-auth";
-import { getMigrations } from "better-auth/db/migration";
-import { admin, jwt } from "better-auth/plugins";
+import { admin, jwt, organization } from "better-auth/plugins";
 import { nextCookies } from "better-auth/next-js";
 import { mcp } from "@better-auth/mcp";
 import { cimd } from "@better-auth/cimd";
@@ -14,6 +14,25 @@ export const APP_URL = (process.env.APP_URL ?? "http://localhost:3300").replace(
 export const MCP_RESOURCE = `${APP_URL}/api/mcp`;
 export const MCP_SCOPES = ["openid", "profile", "email", "offline_access", "metrics:read"];
 export const googleEnabled = Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
+
+/**
+ * Who may create the first (admin) account. On a public address anyone could claim an
+ * uninitialised instance, so setup needs CREAMA_SETUP_TOKEN there; on localhost it's open
+ * unless a token is set anyway.
+ */
+export function setupPolicy(): { tokenRequired: boolean; blocked: string | null } {
+  const token = process.env.CREAMA_SETUP_TOKEN;
+  const local = ["localhost", "127.0.0.1", "::1"].includes(new URL(APP_URL).hostname);
+  if (token) return { tokenRequired: true, blocked: null };
+  return local ? { tokenRequired: false, blocked: null } : { tokenRequired: true, blocked: "Set CREAMA_SETUP_TOKEN on the server to create the first account on a public address." };
+}
+
+function tokenMatches(given: string | null | undefined): boolean {
+  const token = process.env.CREAMA_SETUP_TOKEN;
+  if (!token || !given) return false;
+  const a = Buffer.from(given), b = Buffer.from(token);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
 
 function createAuth() {
   if (!process.env.BETTER_AUTH_SECRET) throw new Error("BETTER_AUTH_SECRET is not set. Generate one: node -e \"console.log(require('crypto').randomBytes(32).toString('base64url'))\"");
@@ -38,16 +57,39 @@ function createAuth() {
       user: {
         create: {
           before: async (user, ctx) => {
-            const { rows } = await pool.query<{ n: number }>(`SELECT count(*)::int AS n FROM "user"`);
-            if (rows[0].n === 0) return { data: { ...user, role: "admin" } }; // the first account runs this instance
             if (ctx?.path === "/admin/create-user") return { data: user }; // an admin's invitation
-            throw new APIError("FORBIDDEN", { message: "Creama is invite-only. Ask an admin to add your email." });
+            const { rows } = await pool.query<{ n: number }>(`SELECT count(*)::int AS n FROM "user"`);
+            if (rows[0].n > 0) throw new APIError("FORBIDDEN", { message: "Creama is invite-only. Ask an admin to add your email." });
+            // first account: check the setup token, then claim admin atomically — of two
+            // simultaneous sign-ups only the one whose INSERT lands becomes admin
+            const policy = setupPolicy();
+            if (policy.blocked) throw new APIError("FORBIDDEN", { message: policy.blocked });
+            const given = ctx?.headers?.get("x-creama-setup-token") ?? ctx?.request?.headers.get("x-creama-setup-token");
+            if (policy.tokenRequired && !tokenMatches(given)) throw new APIError("FORBIDDEN", { message: "Wrong or missing setup token." });
+            const claim = await pool.query(
+              `INSERT INTO settings (key, value) VALUES ('admin_claimed', $1)
+               ON CONFLICT (key) DO UPDATE SET value = excluded.value
+                 -- a claim whose account never got created (it failed after this point) can be retaken
+                 WHERE NOT EXISTS (SELECT 1 FROM "user") AND settings.value::timestamptz < now() - interval '2 minutes'
+               RETURNING key`, [new Date().toISOString()]);
+            if (!claim.rowCount) throw new APIError("FORBIDDEN", { message: "Someone else is setting up this instance. Ask them to invite you." });
+            return { data: { ...user, role: "admin" } };
+          },
+          // everyone belongs to the default workspace: the first account owns it
+          after: async (user) => {
+            const role = (user as { role?: string }).role === "admin"
+              ? ((await pool.query(`SELECT 1 FROM "member" WHERE "organizationId" = 'default' AND role = 'owner'`)).rowCount ? "admin" : "owner")
+              : "member";
+            await pool.query(`INSERT INTO "member" ("id", "organizationId", "userId", "role", "createdAt") VALUES ($1, 'default', $2, $3, now())`, [randomUUID(), user.id, role]);
           },
         },
       },
     },
     plugins: [
       admin(),
+      // workspaces: one "default" workspace for now (created by the base migration); the schema and
+      // membership roles are ready for several, the UI to create and switch them comes later
+      organization({ allowUserToCreateOrganization: false }),
       jwt(),
       // MCP 2026-07-28 only: clients identify themselves with CIMD (an HTTPS client_id URL);
       // no dynamic client registration.
@@ -59,26 +101,19 @@ function createAuth() {
 }
 
 type Auth = ReturnType<typeof createAuth>;
-const g = globalThis as unknown as { __creamaAuth?: { auth: Auth; ready: Promise<void> } };
+const g = globalThis as unknown as { __creamaAuth?: Auth };
 
-/** The auth instance, with its tables created on first use (like the registry's migrations). */
-export function getAuth(): Auth {
-  return ensure().auth;
+/** The auth instance without waiting for the schema: for tooling (bin/auth-schema.ts). */
+export function getAuthUnmigrated(): Auth {
+  return (g.__creamaAuth ??= createAuth());
 }
+
+/** The auth instance once Creama's migrations (which include Better Auth's tables) are applied. */
 export async function authReady(): Promise<Auth> {
-  const a = ensure();
-  await a.ready;
-  return a.auth;
+  await database().ready;
+  return getAuthUnmigrated();
 }
-function ensure() {
-  if (!g.__creamaAuth) {
-    const auth = createAuth();
-    const ready = getMigrations(auth.options).then((m) => m.runMigrations());
-    ready.catch(() => { g.__creamaAuth = undefined; });
-    g.__creamaAuth = { auth, ready };
-  }
-  return g.__creamaAuth;
-}
+export const getAuth = getAuthUnmigrated;
 
 export type SessionUser = { id: string; name: string; email: string; role?: string | null };
 

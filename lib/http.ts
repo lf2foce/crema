@@ -1,6 +1,7 @@
 // HTTP adapter over core/service. Route handlers stay one-liners.
 // Every route needs a signed-in person; /api/v1 (read-only, for software) also accepts CREAMA_API_TOKEN.
 import { timingSafeEqual } from "node:crypto";
+import { DEFAULT_WORKSPACE } from "@/core/registry";
 import { CreamaError, creama, type Creama } from "@/core/service";
 import { sessionUser, type SessionUser } from "@/lib/auth";
 
@@ -15,6 +16,11 @@ function apiToken(req: Request, url: URL): boolean {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
+/**
+ * Every request acts in a workspace (the default one, until the workspace UI exists) and, for
+ * anything analytical, in one of its sources: named by the `x-creama-source` header (the app) or a
+ * `source` route segment. A source from another workspace is simply not found.
+ */
 export function handle(fn: (ctx: Ctx) => Promise<unknown> | unknown, opts: { admin?: boolean } = {}) {
   return async (req: Request, route?: { params?: Promise<Record<string, string>> }) => {
     try {
@@ -26,7 +32,10 @@ export function handle(fn: (ctx: Ctx) => Promise<unknown> | unknown, opts: { adm
       const body = req.method === "GET" || req.method === "DELETE" ? {} : await req.json().catch(() => ({}));
       const actor = user ? user.name || user.email : "api-token";
       const params = (await route?.params) ?? {};
-      const out = await fn({ req, r: creama(), actor, user, body: { ...body, ...params }, url });
+      let r = creama({ workspaceId: DEFAULT_WORKSPACE });
+      const source = params.source ?? req.headers.get("x-creama-source");
+      if (source) r = await r.withSource(decodeURIComponent(source));
+      const out = await fn({ req, r, actor, user, body: { ...body, ...params }, url });
       if (out instanceof Response) return out; // non-JSON formats (CSV) build their own response
       // a promise nested in the response would serialise as {} without any error: fail loudly instead
       if (out && typeof out === "object" && Object.values(out).some((v) => v instanceof Promise)) throw new Error("Route returned an unresolved promise inside its response.");

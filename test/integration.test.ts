@@ -10,6 +10,9 @@ import type { Candidate, CandidateSpec, SchemaSnapshot } from "../core/types";
 import { verify, windows } from "../core/verify";
 import { closePools, Warehouse } from "../core/warehouse";
 import { closeDatabases, database } from "../core/db";
+import pg from "pg";
+
+const ADMIN_PG = process.env.CREAMA_TEST_HOSTING_ADMIN_URL ?? "postgresql://localhost:5432/postgres";
 
 if (existsSync(".env.local")) process.loadEnvFile(".env.local");
 const URL = process.env.CREAMA_DEMO_URL ?? "postgresql://creama_reader:creama_readonly@localhost:5432/creama_demo";
@@ -27,6 +30,7 @@ beforeAll(async () => {
   } catch {
     available = false;
   }
+
 });
 // Creama's state goes to a throwaway schema per test, dropped at the end.
 const STATE_URL = process.env.CREAMA_TEST_STATE_URL ?? "postgresql://localhost:5432/creama_test";
@@ -128,15 +132,17 @@ describe.runIf(() => available)("against the demo database", () => {
   });
 
   it("only certifies with a named human, re-verifies, versions immutably, and serves only certified metrics", async () => {
-    const r = new Creama(freshRegistry());
-    await r.connect(URL, "test");
-    const runId = await r.reg.createRun("fixture", null, null);
+    const base = new Creama(freshRegistry());
+    const { source } = await base.addExternal(URL, "test", "Demo");
+    const r = await base.withSource(source.id);
+    const ref = `${source.slug}/mrr`;
+    const runId = await r.reg.createRun(source.id, "fixture", null, null);
     const [va, vb] = await Promise.all([verify(wh, mrrPaid, snap), verify(wh, mrrNaive, snap)]);
     await r.reg.updateRun(runId, { status: "done", summary: "fixture", snapshot: snap });
-    const conceptId = await r.reg.saveConcept(runId, { key: "mrr", name: "MRR", question: "What is our MRR?", candidates: [mrrPaid, mrrNaive] }, [va, vb], null);
-    const concept = (await r.reg.concept(conceptId))!;
+    const conceptId = await r.reg.saveConcept(source.id, runId, { key: "mrr", name: "MRR", question: "What is our MRR?", candidates: [mrrPaid, mrrNaive] }, [va, vb], null);
+    const concept = (await r.reg.concept(source.id, conceptId))!;
 
-    await expect(r.query("mrr")).rejects.toThrow(/No certified metric/);
+    await expect(r.query(ref)).rejects.toThrow(/No certified metric/);
     expect(await r.listMetrics()).toEqual([]);
     await expect(r.certify({ conceptId, candidateId: concept.candidates[0].id, actor: "" })).rejects.toThrow(/needs a name/);
     await expect(r.certify({ conceptId, candidateId: concept.candidates[0].id, actor: "Ana", edits: { sql: "SELECT 1 AS value FROM public.plans WHERE now() > {{at}}" } })).rejects.toThrow(/Not certified/);
@@ -146,20 +152,20 @@ describe.runIf(() => available)("against the demo database", () => {
     expect(Object.keys(v1.fingerprint)).toContain("public.plans");
     await expect(r.certify({ conceptId, candidateId: concept.candidates[1].id, actor: "Ana" })).rejects.toThrow(/already certified/);
 
-    const q = await r.query("mrr", { grain: "month", from: "2026-01-01" });
+    const q = await r.query(ref, { grain: "month", from: "2026-01-01" });
     expect(q).toMatchObject({ version: 1, certifiedBy: "Ana", trust: "certified" });
     expect((q as { points: unknown[] }).points.length).toBeGreaterThanOrEqual(9);
 
     const v2 = await r.revise({ key: "mrr", actor: "Ben", note: "list price", edits: { sql: mrrNaive.sql } });
     expect(v2.version).toBe(2);
-    const pinned = await r.query("mrr", { version: 1 });
-    const latest = await r.query("mrr");
+    const pinned = await r.query(ref, { version: 1 });
+    const latest = await r.query(ref);
     expect((latest as { value: number }).value).toBeGreaterThan((pinned as { value: number }).value);
 
     // a trailing ";" (models write it) passes verification; it must not break the series every consumer reads
     const v3 = await r.revise({ key: "mrr", actor: "Ben", note: "semicolon", edits: { sql: `${mrrNaive.sql};\n` } });
     expect(v3.sql.trim().endsWith(";")).toBe(false);
-    const series = await r.query("mrr", { grain: "month", from: "2026-01-01" });
+    const series = await r.query(ref, { grain: "month", from: "2026-01-01" });
     expect((series as { points: unknown[] }).points.length).toBeGreaterThanOrEqual(9);
 
     const db = r.reg.db.pool;
@@ -168,17 +174,19 @@ describe.runIf(() => available)("against the demo database", () => {
     await expect(db.query("UPDATE events SET actor = 'x'")).rejects.toThrow(/append-only/);
     await expect(db.query("DELETE FROM events")).rejects.toThrow(/append-only/);
     // certifying closed the proposal in the same transaction
-    expect((await r.reg.concept(conceptId))!.status).toBe("certified");
+    expect((await r.reg.concept(source.id, conceptId))!.status).toBe("certified");
+    expect((await base.listMetrics()).map((m) => m.ref)).toEqual([ref]);
     expect((await r.audit()).map((e) => e.action)).toEqual(expect.arrayContaining(["metric.certified", "metric.revised", "proposal.certified"]));
 
-    await r.retire("mrr", "Ben");
+    await r.deprecate("mrr", "Ben");
     expect(await r.listMetrics()).toEqual([]);
-    await expect(r.query("mrr")).rejects.toThrow(/No certified metric/);
+    await expect(r.query(ref)).rejects.toThrow(/No certified metric/);
   });
 
   it("lets a person create a metric by hand, with the same checks and audit trail", async () => {
-    const r = new Creama(freshRegistry());
-    await r.connect(URL, "test");
+    const base = new Creama(freshRegistry());
+    const { source } = await base.addExternal(URL, "test");
+    const r = await base.withSource(source.id);
     const edits = { name: "Doanh thu thuần", question: "Doanh thu sau hoàn tiền?", kind: "flow" as const, unit: "currency" as const, sql: "SELECT coalesce(sum(total_cents), 0) / 100.0 AS value FROM public.invoices WHERE status = 'paid' AND paid_at >= {{start}} AND paid_at < {{end}}" };
 
     await expect(r.create({ edits, actor: "" })).rejects.toThrow(/needs a name/);
@@ -190,7 +198,42 @@ describe.runIf(() => available)("against the demo database", () => {
     expect(v).toMatchObject({ metricKey: "doanh_thu_thuan", version: 1, origin: "human", certifiedBy: "Ana", unit: "currency" });
     expect(Object.keys(v.fingerprint)).toContain("public.invoices");
     await expect(r.create({ edits, actor: "Ana" })).rejects.toThrow(/already exists/);
-    expect((await r.query("doanh_thu_thuan")) as { value: number }).toMatchObject({ trust: "certified" });
+    expect((await r.query(`${source.slug}/doanh_thu_thuan`)) as { value: number }).toMatchObject({ trust: "certified" });
     expect((await r.audit()).map((e) => e.action)).toEqual(expect.arrayContaining(["metric.certified", "metric.created"]));
+  });
+
+  it("keeps metrics on their own source and stops serving one whose tables changed", async () => {
+    const dbName = `creama_drift_${process.pid}`;
+    const raw = new pg.Client({ connectionString: ADMIN_PG }); await raw.connect();
+    try {
+      await raw.query(`DROP DATABASE IF EXISTS ${dbName}`);
+      await raw.query(`CREATE DATABASE ${dbName}`);
+      const u = new globalThis.URL(ADMIN_PG); u.pathname = `/${dbName}`;
+      const setup = new pg.Client({ connectionString: u.toString() }); await setup.connect();
+      await setup.query("CREATE TABLE orders (id serial PRIMARY KEY, total int); INSERT INTO orders (total) VALUES (5), (7)");
+
+      const base = new Creama(freshRegistry());
+      const a = await base.addExternal(u.toString(), "test", "Shop");
+      const b = await base.addExternal(URL, "test", "Shop"); // same name → its own slug
+      expect(b.source.slug).not.toBe(a.source.slug);
+      const shop = await base.withSource(a.source.id);
+      await shop.create({ edits: { name: "Orders", kind: "snapshot", unit: "count", sql: "SELECT count(*) AS value FROM public.orders" }, actor: "Ana" });
+      const ref = `${a.source.slug}/orders`;
+      expect(await shop.query(ref)).toMatchObject({ value: 2, source: a.source.slug });
+      // the same key on another source isn't this metric
+      await expect(base.query(`${b.source.slug}/orders`)).rejects.toThrow(/No certified metric/);
+
+      // the table changes: not served, marked, until re-certified
+      await setup.query("ALTER TABLE orders ADD COLUMN channel text");
+      await expect(base.query(ref)).rejects.toThrow(/needs attention.*public\.orders/);
+      expect((await shop.reg.metric(a.source.id, "orders"))!.status).toBe("needs_attention");
+      await shop.revise({ key: "orders", edits: {}, actor: "Ana", note: "channel column is irrelevant" });
+      expect(await base.query(ref)).toMatchObject({ value: 2, version: 2 });
+      expect((await shop.reg.metric(a.source.id, "orders"))!.status).toBe("certified");
+      await setup.end();
+    } finally {
+      await raw.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`).catch(() => {});
+      await raw.end();
+    }
   });
 });

@@ -1,9 +1,10 @@
 #!/usr/bin/env -S npx tsx
 // Creama CLI and MCP server. Same domain core as the web app; no HTTP involved.
-//   creama connect <postgres-url>
-//   creama discover [--hint "..."] [--focus "metric name"]
+//   creama connect <postgres-url> [--name "..."]          add a database (a source) to the workspace
+//   creama sources
+//   creama discover [--source slug] [--hint "..."] [--focus "metric name"]
 //   creama list
-//   creama query <key> [--from 2026-01-01] [--to ...] [--grain month] [--version 1] [--json]
+//   creama query <source/key> [--from 2026-01-01] [--to ...] [--grain month] [--version 1] [--json]
 //   creama audit
 //   creama mcp            # stdio MCP server exposing certified metrics only
 import { existsSync } from "node:fs";
@@ -32,30 +33,42 @@ for (let i = 0; i < rest.length; i++) {
 }
 
 const r = new Creama();
+/** The source a command acts on: --source, or the only/first one in the workspace. */
+async function pick() {
+  if (flags.source) return r.withSource(flags.source);
+  const [first] = await r.reg.sources(r.scope.workspaceId);
+  if (!first) throw new CreamaError("No database yet: run `creama connect <postgres-url>` first.");
+  return r.withSource(first.id);
+}
 const out = (s = "") => process.stdout.write(s + "\n");
 
 async function main() {
   switch (cmd) {
     case "connect": {
       if (!args[0]) throw new CreamaError("Usage: creama connect <postgres-url>");
-      const c = await r.connect(args[0], process.env.USER ?? "cli");
-      out(`Connected to ${c.display} · ${c.tables} tables · ${c.readOnlyRole || !c.writableTables ? "read-only role" : `role can write to ${c.writableTables} tables (Creama only reads)`}`);
+      const c = await r.addExternal(args[0], process.env.USER ?? "cli", flags.name);
+      out(`Added ${c.source.name} as “${c.source.slug}” · ${c.display} · ${c.tables} tables · ${c.readOnlyRole || !c.writableTables ? "read-only role" : `role can write to ${c.writableTables} tables (Creama only reads)`}`);
+      return;
+    }
+    case "sources": {
+      for (const s of await r.sources()) out(`${s.slug.padEnd(24)} ${s.kind.padEnd(9)} ${s.status.padEnd(13)} ${String(s.metrics).padStart(3)} metrics  ${s.name}`);
       return;
     }
     case "discover": {
-      const id = await r.reg.createRun((await import("../core/model")).modelName(), flags.hint ?? null, flags.focus ?? null);
+      const src = await pick();
+      const id = await src.reg.createRun(src.src().id, (await import("../core/model")).modelName(), flags.hint ?? null, flags.focus ?? null);
       let seen = 0;
       const timer = setInterval(async () => {
-        const steps = (await r.reg.run(id))!.steps;
+        const steps = (await src.reg.run(src.src().id, id))!.steps;
         for (; seen < steps.length; seen++) {
           const s = steps[seen];
           out(s.kind === "step" ? `\n● ${s.text}` : s.kind === "found" ? `  + ${s.text}` : `  ${s.text}`);
         }
       }, 200);
       try {
-        await r.discover(id, { hint: flags.hint, focus: flags.focus });
+        await src.discover(id, { hint: flags.hint, focus: flags.focus });
       } catch (e) {
-        await r.reg.updateRun(id, { status: "failed", error: (e as Error).message });
+        await src.reg.updateRun(id, { status: "failed", error: (e as Error).message });
         throw e;
       } finally {
         await new Promise((ok) => setTimeout(ok, 250));
@@ -67,14 +80,14 @@ async function main() {
     case "list": {
       const ms = await r.listMetrics();
       if (!ms.length) return out("No certified metrics yet. Run `creama discover`, then certify proposals in the web app.");
-      for (const m of ms) out(`${m.key.padEnd(28)} ${display(m.latest.value, m.unit).padStart(10)}  v${m.version} · ${m.certifiedBy} · ${m.name}`);
+      for (const m of ms) out(`${m.ref.padEnd(36)} ${display(m.latest.value, m.unit).padStart(10)}  v${m.version} · ${m.certifiedBy} · ${m.name}`);
       return;
     }
     case "query": {
-      if (!args[0]) throw new CreamaError("Usage: creama query <key> [--from] [--to] [--grain day|week|month|quarter|year] [--version n]");
+      if (!args[0]) throw new CreamaError("Usage: creama query <source/key> [--from] [--to] [--grain day|week|month|quarter|year] [--version n]");
       const res: any = await r.query(args[0], { from: flags.from, to: flags.to, grain: (flags.grain as any) ?? null, version: flags.version ? Number(flags.version) : undefined });
       if (flags.json) return out(JSON.stringify(res, null, 2));
-      out(`${res.name} · v${res.version} certified by ${res.certifiedBy}${res.trust === "drifted" ? `\n⚠ ${res.drift}` : ""}`);
+      out(`${res.name} (${res.metric}) · v${res.version} certified by ${res.certifiedBy}`);
       if (res.points) for (const p of res.points) out(`  ${p.start.slice(0, 10)}  ${display(p.value, res.unit, { compact: false }).padStart(14)}`);
       else out(`  ${display(res.value, res.unit, { compact: false })}  (${res.from.slice(0, 10)} → ${res.to.slice(0, 10)})`);
       return;
@@ -86,7 +99,7 @@ async function main() {
     case "mcp":
       return mcp();
     default:
-      out("Usage: creama <connect|discover|list|query|audit|mcp> ...");
+      out("Usage: creama <connect|sources|discover|list|query|audit|mcp> ...");
   }
 }
 

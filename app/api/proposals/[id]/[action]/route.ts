@@ -6,8 +6,8 @@ export const POST = handle(({ r, body, actor }) => {
   switch (body.action) {
     case "certify":
       return r.certify({ conceptId: id, candidateId: Number(body.candidateId), edits: body.edits, actor, note: body.note });
-    case "dismiss":
-      return r.dismiss(id, actor, body.reason);
+    case "reject":
+      return r.reject(id, actor, body.reason);
     case "reopen":
       return r.reopen(id, actor);
     default:

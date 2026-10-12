@@ -122,7 +122,7 @@ function MetricRow({ r, selected }: { r: Extract<Row, { kind: "metric" }>; selec
       <div className="reg-meaning" title={cur.description}>{cur.question}</div>
       <div className="reg-value">{display(cur.verification.value, cur.unit)}</div>
       <div><span className="conf" style={{ ["--w" as string]: "100%", ["--c" as string]: "var(--ok)" }}><i />a person decided</span></div>
-      <div className="reg-status ok">✓ Certified v{m.currentVersion}<small>{actorLabel(cur.certifiedBy)} · {ago(cur.certifiedAt)}{cur.origin === "human" ? " · by hand" : ""}</small></div>
+      <div className={`reg-status ${m.status === "needs_attention" ? "needs" : "ok"}`} title={m.attention ?? undefined}>{m.status === "needs_attention" ? "Needs attention" : `✓ Certified v${m.currentVersion}`}<small>{actorLabel(cur.certifiedBy)} · {ago(cur.certifiedAt)}{cur.origin === "human" ? " · by hand" : ""}</small></div>
     </a>
   );
 }

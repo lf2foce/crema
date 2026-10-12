@@ -150,7 +150,23 @@ export interface Comparison {
 
 // ---------- registry ----------
 
-export type ConceptStatus = "open" | "certified" | "dismissed" | "superseded";
+export type ConceptStatus = "open" | "certified" | "rejected" | "superseded";
+
+/** A database Creama analyses: one you connected (external) or one it created for an app (hosted). */
+export interface Source {
+  id: number;
+  workspaceId: string;
+  slug: string;
+  name: string;
+  kind: "external" | "hosted";
+  status: "provisioning" | "ready" | "failed";
+  error: string | null;
+  readOnly: boolean;
+  writableTables: number;
+  dbName: string | null;
+  createdBy: string;
+  createdAt: string;
+}
 
 export interface Candidate extends CandidateSpec {
   id: number;
@@ -160,6 +176,7 @@ export interface Candidate extends CandidateSpec {
 
 export interface Concept {
   id: number;
+  sourceId: number;
   runId: number;
   key: string;
   name: string;
@@ -191,10 +208,16 @@ export interface MetricVersion {
   verification: Verification;
 }
 
+export type MetricStatus = "certified" | "needs_attention" | "deprecated";
+
 export interface Metric {
+  id: number;
+  sourceId: number;
   key: string;
   name: string;
-  status: "certified" | "retired";
+  status: MetricStatus;
+  /** why it needs attention (schema drift…); while set, the metric is not served */
+  attention: string | null;
   owner: string;
   currentVersion: number;
   createdAt: string;
@@ -209,6 +232,7 @@ export interface RunStep {
 
 export interface Run {
   id: number;
+  sourceId: number;
   status: "running" | "done" | "failed";
   startedAt: string;
   finishedAt: string | null;
@@ -219,14 +243,6 @@ export interface Run {
   entities: EntityReading[];
   sentToModel: unknown;
   error: string | null;
-}
-
-export interface HostedDatabase {
-  id: number;
-  name: string;
-  dbName: string;
-  createdBy: string;
-  createdAt: string;
 }
 
 export interface SavedQuery {

@@ -27,6 +27,8 @@ pnpm build && pnpm start          # http://localhost:3300
 
 The first person to open it creates the admin account; after that Creama is invite-only (admins add people under their name in the status bar). Email + password, or Google for invited emails when `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` are set.
 
+Each database you connect (or create) is a **source** in the workspace: it has its own schema map, tables, SQL editor, proposals and certified metrics, at `/s/<source>`. A metric always runs on the source it was certified on. Add more from **databases** in the status bar.
+
 Click **Try it on a demo SaaS database**. About a minute later you're reviewing proposals. To use your own database, paste a connection string (preferably a read-only role) or set `CREAMA_DATABASE_URL`.
 
 The demo database is deliberately messy, like real ones: amounts in cents, tax on invoices, annual plans, trials, past-due subscriptions, internal accounts, soft-deleted rows, voided invoices, refunds and plan upgrades.
@@ -37,10 +39,10 @@ Only certified metrics are visible to consumers. Every answer carries its proven
 
 ```sh
 H="Authorization: Bearer $CREAMA_API_TOKEN"
-curl -H "$H" "localhost:3300/api/v1/metrics"                                   # contracts
-curl -H "$H" "localhost:3300/api/v1/metrics/mrr/values?grain=month&from=2026-01-01"
-curl -H "$H" "localhost:3300/api/v1/metrics/mrr/values?version=1"               # pin a version
-curl "localhost:3300/api/v1/metrics/mrr/values?grain=month&format=csv&token=…"   # CSV, for spreadsheet IMPORTDATA
+curl -H "$H" "localhost:3300/api/v1/metrics"                                        # every certified metric, with its ref
+curl -H "$H" "localhost:3300/api/v1/metrics/demo/mrr/values?grain=month&from=2026-01-01"   # <source>/<key>
+curl -H "$H" "localhost:3300/api/v1/metrics/demo/mrr/values?version=1"                    # pin a version
+curl "localhost:3300/api/v1/metrics/demo/mrr/values?grain=month&format=csv&token=…"       # CSV, for spreadsheet IMPORTDATA
 ```
 
 ```json
@@ -64,9 +66,10 @@ Locally, the same tools over stdio:
 **CLI**
 
 ```sh
-pnpm creama discover              # same discovery, in the terminal
+pnpm creama sources                       # databases in the workspace
+pnpm creama discover --source demo        # same discovery, in the terminal
 pnpm creama list
-pnpm creama query mrr --grain quarter --from 2025-10-01
+pnpm creama query demo/mrr --grain quarter --from 2025-10-01
 pnpm creama audit
 ```
 
@@ -89,7 +92,7 @@ Each proposed definition is executed and inspected by code before you see it, an
 - a 12-month history, plus a check that it isn't flat for lack of history
 - soft-deleted rows counted, internal/test accounts not excluded, cents not converted, currencies mixed
 - the listed rows add up to the number (that's what makes disagreements traceable)
-- after certification: the shape of every table the query plan touches is fingerprinted, and answers report `trust: "drifted"` when that changes
+- after certification: the shape of every table the query plan touches is fingerprinted; when it changes, the metric becomes **needs attention** and is not served by any channel until a person re-certifies it
 
 ## Security and privacy
 

@@ -103,7 +103,7 @@ export function ProposalView({ concept, queue, runId, model, back, notify, onCer
   const doDismiss = async () => {
     const reason = window.prompt("Why isn’t this a metric you need? (optional, goes into the audit log)") ?? undefined;
     if (reason === undefined) return;
-    try { await api(`/api/proposals/${concept.id}/dismiss`, { body: { reason } }); notify(`Dismissed ${concept.name}.`); onChanged(); }
+    try { await api(`/api/proposals/${concept.id}/reject`, { body: { reason } }); notify(`Rejected ${concept.name}.`); onChanged(); }
     catch (e) { notify((e as Error).message, true); }
   };
 

@@ -1,7 +1,7 @@
 "use client";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { setCurrency } from "@/core/format";
-import { api, contested, session, spreadOf, type AppState, type Run } from "@/lib/client";
+import { api, contested, session, setCurrentSource, sourceHref, spreadOf, type AppState, type Run } from "@/lib/client";
 import { ProposalView } from "./Proposal";
 import { MetricView } from "./MetricView";
 import { Overview } from "./Overview";
@@ -11,10 +11,10 @@ import { Schema } from "./Schema";
 import { SqlEditor } from "./SqlEditor";
 import { Tables } from "./Tables";
 import { People } from "./People";
-import { Hosted } from "./Hosted";
+import { Databases } from "./Databases";
 import { authClient } from "@/lib/authClient";
 
-export type Sel = { type: "list" } | { type: "business" } | { type: "new" } | { type: "schema" } | { type: "sql" } | { type: "people" } | { type: "hosted" } | { type: "tables"; table: string | null } | { type: "proposal"; id: number } | { type: "metric"; key: string };
+export type Sel = { type: "list" } | { type: "business" } | { type: "new" } | { type: "schema" } | { type: "sql" } | { type: "people" } | { type: "databases"; id: number | null } | { type: "connect" } | { type: "tables"; table: string | null } | { type: "proposal"; id: number } | { type: "metric"; key: string };
 
 function readHash(): Sel {
   if (typeof window === "undefined") return { type: "list" };
@@ -24,20 +24,24 @@ function readHash(): Sel {
   if (h === "schema") return { type: "schema" };
   if (h === "sql") return { type: "sql" };
   if (h === "people") return { type: "people" };
-  if (h === "hosted") return { type: "hosted" };
+  if (h === "databases") return { type: "databases", id: null };
+  if (h === "connect") return { type: "connect" };
   if (h === "tables") return { type: "tables", table: null };
   const [t, v] = h.split("/");
   if (t === "p" && v) return { type: "proposal", id: Number(v) };
   if (t === "m" && v) return { type: "metric", key: decodeURIComponent(v) };
   if (t === "tables" && v) return { type: "tables", table: decodeURIComponent(v) };
+  if (t === "databases" && v) return { type: "databases", id: Number(v) };
   return { type: "list" };
 }
 
 export function hashOf(s: Sel) {
-  return s.type === "list" ? "#" : s.type === "business" ? "#business" : s.type === "new" ? "#new" : s.type === "schema" ? "#schema" : s.type === "sql" ? "#sql" : s.type === "people" ? "#people" : s.type === "hosted" ? "#hosted" : s.type === "tables" ? (s.table ? `#tables/${encodeURIComponent(s.table)}` : "#tables") : s.type === "proposal" ? `#p/${s.id}` : `#m/${encodeURIComponent(s.key)}`;
+  return s.type === "list" ? "#" : s.type === "business" ? "#business" : s.type === "new" ? "#new" : s.type === "schema" ? "#schema" : s.type === "sql" ? "#sql" : s.type === "people" ? "#people" : s.type === "databases" ? (s.id ? `#databases/${s.id}` : "#databases") : s.type === "connect" ? "#connect" : s.type === "tables" ? (s.table ? `#tables/${encodeURIComponent(s.table)}` : "#tables") : s.type === "proposal" ? `#p/${s.id}` : `#m/${encodeURIComponent(s.key)}`;
 }
 
-export function App() {
+/** Workspace pages live at / (#databases, #people, #connect); one database's pages at /s/<slug>. */
+export function App({ sourceSlug }: { sourceSlug: string | null }) {
+  setCurrentSource(sourceSlug);
   const [state, setState] = useState<AppState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<{ text: string; error?: boolean } | null>(null);
@@ -82,19 +86,37 @@ export function App() {
 
   if (error && !state) return <Shell sel={sel}><div className="center"><div className="hero"><h1>Can’t reach Creama</h1><p className="lead">{error}</p><button className="btn" onClick={reload}>Retry</button></div></div></Shell>;
   if (!state) return <Shell sel={sel}><div className="center"><span className="spin" /></div></Shell>;
-  // creating a database or inviting people doesn't need an analysed database yet
-  if (!state.connection && (sel.type === "hosted" || sel.type === "people")) return (
+  const admin = state.me?.role === "admin";
+  const toastEl = toast && <Toast {...toast} />;
+
+  // ---- workspace pages ----
+  if (!sourceSlug) {
+    const ready = state.sources.filter((x) => x.status === "ready");
+    if (sel.type === "people" && state.me) return <Shell state={state} sel={sel}><People me={state.me} notify={notify} />{toastEl}</Shell>;
+    if (sel.type === "databases") return <Shell state={state} sel={sel}><Databases state={state} selected={sel.id} notify={notify} reload={reload} />{toastEl}</Shell>;
+    if (sel.type === "connect" || !ready.length) return <Shell state={state} sel={sel}><Connect state={state} notify={notify} />{toastEl}</Shell>;
+    // the workspace home is its first database
+    if (typeof window !== "undefined") window.location.replace(sourceHref(ready[0].slug));
+    return <Shell state={state} sel={sel}><div className="center"><span className="spin" /></div></Shell>;
+  }
+
+  // ---- one database ----
+  if (!state.source) return (
     <Shell state={state} sel={sel}>
-      {sel.type === "hosted" ? <><DatabaseTabs sel={sel} state={state} /><Hosted notify={notify} reload={reload} /></> : state.me && <People me={state.me} notify={notify} />}
-      {toast && <Toast {...toast} />}
+      <div className="center"><div className="hero"><h1>No database “{sourceSlug}”</h1><p className="lead">It may have been removed, or it belongs to another workspace.</p><a className="btn" href="/#databases">All databases</a></div></div>
     </Shell>
   );
-  if (!state.connection) return <Shell state={state} sel={sel}><Connect state={state} onDone={reload} notify={notify} />{toast && <Toast {...toast} />}</Shell>;
+  if (state.source.status !== "ready") return (
+    <Shell state={state} sel={sel}>
+      <div className="center"><div className="hero"><h1>{state.source.name} isn’t ready</h1><p className="lead">{state.source.status === "provisioning" ? "It’s being created." : state.source.error ?? "It failed to provision."}</p><a className="btn" href={`/#databases/${state.source.id}`}>Open in Databases</a></div></div>
+    </Shell>
+  );
   if (state.run?.status === "running") return <Shell state={state} sel={sel}><Discovery runId={state.run.id} onDone={() => { setSel({ type: "list" }); reload(); }} /></Shell>;
 
   const empty = !state.proposals.length && !state.metrics.length;
-  const selected = sel.type === "proposal" ? state.proposals.find((p) => p.id === sel.id) ?? state.dismissed.find((p) => p.id === sel.id) : null;
+  const selected = sel.type === "proposal" ? state.proposals.find((p) => p.id === sel.id) ?? state.rejected.find((p) => p.id === sel.id) : null;
   const toList = () => setSel({ type: "list" });
+  void admin;
 
   return (
     <Shell state={state} sel={sel}>
@@ -105,9 +127,8 @@ export function App() {
       {isDatabase(sel) && <DatabaseTabs sel={sel} state={state} />}
       {sel.type === "schema" && <Schema notify={notify} />}
       {sel.type === "sql" && <SqlEditor state={state} notify={notify} />}
-      {sel.type === "people" && state.me && <People me={state.me} notify={notify} />}
-      {sel.type === "hosted" && <Hosted notify={notify} reload={reload} />}
       {sel.type === "tables" && <Tables table={sel.table} notify={notify} />}
+      {(sel.type === "people" || sel.type === "databases" || sel.type === "connect") && <div className="center"><a className="btn" href={`/${hashOf(sel)}`}>Open workspace page</a></div>}
       {sel.type === "new" && <NewMetric notify={notify} back={toList} onCreated={async (key) => { await reload(); setSel({ type: "metric", key }); }} />}
       {sel.type === "proposal" && selected && (
         <ProposalView key={selected.id} concept={selected} queue={proposals} runId={selected.runId} model={state.understanding?.model ?? state.model.name}
@@ -116,23 +137,23 @@ export function App() {
           onChanged={async () => { await reload(); const next = proposals.find((p) => p.id !== selected.id); setSel(next ? { type: "proposal", id: next.id } : { type: "list" }); }} />
       )}
       {sel.type === "proposal" && !selected && <div className="page"><button className="btn sm ghost" onClick={toList}>← Metrics</button><p className="muted">This proposal is no longer open.</p></div>}
-      {sel.type === "metric" && <MetricView key={sel.key} metricKey={sel.key} back={toList} notify={notify} reload={reload} cwd={state.cwd} tokenRequired={state.tokenRequired} />}
-      {toast && <Toast {...toast} />}
+      {sel.type === "metric" && <MetricView key={sel.key} source={state.source} metricKey={sel.key} back={toList} notify={notify} reload={reload} cwd={state.cwd} tokenRequired={state.tokenRequired} />}
+      {toastEl}
     </Shell>
   );
 }
 
-const isDatabase = (s: Sel) => s.type === "schema" || s.type === "tables" || s.type === "sql" || s.type === "hosted";
+const isDatabase = (s: Sel) => s.type === "schema" || s.type === "tables" || s.type === "sql";
 
 /** One place for looking at the raw database: its shape, its rows, and ad-hoc queries. */
 function DatabaseTabs({ sel, state }: { sel: Sel; state: AppState }) {
-  const tabs: [Sel["type"], string, string][] = [["schema", "Schema", "#schema"], ["tables", "Tables", "#tables"], ["sql", "SQL editor", "#sql"],
-    ...(state.me?.role === "admin" ? [["hosted", "Hosted databases", "#hosted"] as [Sel["type"], string, string]] : [])];
+  const tabs: [Sel["type"], string, string][] = [["schema", "Schema", "#schema"], ["tables", "Tables", "#tables"], ["sql", "SQL editor", "#sql"]];
+  const src = state.source!;
   return (
     <nav className="dbtabs" aria-label="Database">
       {tabs.map(([t, label, href]) => <a key={t} href={href} className={sel.type === t ? "on" : ""} aria-current={sel.type === t ? "page" : undefined}>{label}</a>)}
       <span className="grow" />
-      <span className="dbtabs-note">{state.connection ? <>{state.connection.database} · read-only{!state.connection.readOnly ? " transactions (this role can write)" : ""}</> : "no database analysed yet"}</span>
+      <span className="dbtabs-note">{src.name} · {src.kind === "hosted" ? "hosted" : "connected"} · read-only{!src.readOnly ? " transactions (this login can write)" : ""}</span>
     </nav>
   );
 }
@@ -147,24 +168,29 @@ function Toast({ text, error }: { text: string; error?: boolean }) {
 }
 
 function Shell({ state, sel, children }: { state?: AppState; sel: Sel; children: React.ReactNode }) {
-  const c = state?.connection;
+  const src = state?.source ?? null;
   const busy = state?.run?.status === "running";
   const n = state?.proposals.length ?? 0, m = state?.metrics.length ?? 0;
-  const where = sel.type === "proposal" || sel.type === "metric" || sel.type === "business" || sel.type === "new" || sel.type === "schema" || sel.type === "sql" || sel.type === "tables" || sel.type === "people";
+  const inner = sel.type === "proposal" || sel.type === "metric" || sel.type === "business" || sel.type === "new" || isDatabase(sel);
+  const workspacePage = !src;
   return (
     <>
       <header className="statusbar">
-        <span className="ellipsis">
-          {where ? <a href="#" className="on">← all metrics</a> : <a href="#">creama</a>}
-          {" — "}
-          {c ? <span title={c.readOnly ? "Connected with a read-only role" : `This role can write to ${c.writableTables} tables. Creama only runs read-only transactions, but a read-only role is safer.`}>
-            {c.database} <span className={c.readOnly ? "" : "warn"}>({c.readOnly ? "read-only" : "role can write"})</span>
-          </span> : "no database yet"}
-          {sel.type === "metric" && <> / {sel.key}</>}
-          {sel.type === "proposal" && <> / {state?.proposals.find((p) => p.id === sel.id)?.key ?? "proposal"}</>}
+        <span className="sb-left">
+          {src && inner ? <a href="#" className="on">← all metrics</a> : <a href="/#databases">creama</a>}
+          <span>—</span>
+          {state && state.sources.length > 0 ? (
+            <select className="sb-select" aria-label="Database" value={src?.slug ?? ""} onChange={(e) => { window.location.href = e.target.value ? sourceHref(e.target.value) : "/#databases"; }}>
+              {!src && <option value="">all databases</option>}
+              {state.sources.map((x) => <option key={x.id} value={x.slug}>{x.name}{x.status !== "ready" ? ` (${x.status})` : ""}</option>)}
+            </select>
+          ) : <span>no database yet</span>}
+          {src && !src.readOnly && <span className="warn" title={`This login can write to ${src.writableTables} tables. Creama only runs read-only transactions, but a read-only login is safer.`}>(login can write)</span>}
+          {sel.type === "metric" && <span className="ellipsis">/ {sel.key}</span>}
+          {sel.type === "proposal" && <span className="ellipsis">/ {state?.proposals.find((p) => p.id === sel.id)?.key ?? "proposal"}</span>}
         </span>
         <span className="grow" />
-        {c && !busy && sel.type === "metric" && state && (() => {
+        {src && !busy && sel.type === "metric" && state && (() => {
           const next = nextUp(state);
           return (
             <nav className="sb-right" aria-label="Main">
@@ -173,7 +199,7 @@ function Shell({ state, sel, children }: { state?: AppState; sel: Sel; children:
             </nav>
           );
         })()}
-        {c && !busy && sel.type !== "metric" && (
+        {src && !busy && sel.type !== "metric" && (
           <nav className="sb-right" aria-label="Main">
             <span className="hide-sm">{n} proposed · {m} certified ·</span>
             <a href="#schema" className={isDatabase(sel) ? "on" : ""}>database</a>
@@ -186,8 +212,10 @@ function Shell({ state, sel, children }: { state?: AppState; sel: Sel; children:
         {busy && <span>scanning…</span>}
         {state?.me && (
           <span className="sb-user">
-            {c && <span>·</span>}
-            {state.me.role === "admin" ? <a href="#people" className={sel.type === "people" ? "on" : ""} title="People who can sign in">{state.me.name}</a> : <span>{state.me.name}</span>}
+            {(src || workspacePage) && <span>·</span>}
+            <a href="/#databases" className={sel.type === "databases" ? "on" : ""}>databases</a>
+            <span>·</span>
+            {state.me.role === "admin" ? <a href="/#people" className={sel.type === "people" ? "on" : ""} title="People who can sign in">{state.me.name}</a> : <span>{state.me.name}</span>}
             <span>·</span>
             <button className="sb-btn" onClick={async () => { await authClient.signOut(); window.location.href = "/sign-in"; }}>sign out</button>
           </span>
@@ -198,25 +226,27 @@ function Shell({ state, sel, children }: { state?: AppState; sel: Sel; children:
   );
 }
 
-function Connect({ state, onDone, notify }: { state: AppState; onDone: () => void; notify: (t: string, e?: boolean) => void }) {
+function Connect({ state, notify }: { state: AppState; notify: (t: string, e?: boolean) => void }) {
   const [url, setUrl] = useState("");
   const [busy, setBusy] = useState(false);
+  const admin = state.me?.role === "admin";
   const go = useCallback(async (body: unknown) => {
     setBusy(true);
     try {
-      const r = await api<{ writableTables: number; readOnlyRole: boolean; tables: number }>("/api/connect", { body });
-      if (!state.model.configured) { notify("Connected. Set GEMINI_API_KEY to let Creama propose metrics, or create metrics by hand."); onDone(); return; }
-      await api("/api/discover", { body: {} });
-      if (r.writableTables > 0 && !r.readOnlyRole) notify(`Connected. Note: this role can write to ${r.writableTables} tables; Creama only reads.`);
-      onDone();
-    } catch (e) { notify((e as Error).message, true); } finally { setBusy(false); }
-  }, [state.model.configured, notify, onDone]);
+      const r = await api<{ source: { slug: string }; writableTables: number; readOnlyRole: boolean }>("/api/sources", { body, source: null });
+      if (state.model.configured) await api("/api/discover", { body: {}, source: r.source.slug });
+      window.location.href = sourceHref(r.source.slug);
+    } catch (e) { notify((e as Error).message, true); setBusy(false); }
+  }, [state.model.configured, notify]);
   useEffect(() => {
-    if (!state.demoAvailable) return;
-    const onKey = (e: KeyboardEvent) => { if ((e.key === "d" || e.key === "D") && !(e.target as HTMLElement).closest("input, textarea") && !busy) go({ demo: true }); };
+    if (!state.demoAvailable || !admin) return;
+    const onKey = (e: KeyboardEvent) => { if ((e.key === "d" || e.key === "D") && !(e.target as HTMLElement).closest("input, textarea, select") && !busy) go({ demo: true }); };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [state.demoAvailable, busy, go]);
+  }, [state.demoAvailable, admin, busy, go]);
+  if (!admin) return (
+    <div className="connect"><h1>No databases yet</h1><p className="lead">An admin adds databases to this workspace. Ask one to connect yours.</p></div>
+  );
   return (
     <div className="connect">
       <h1>Connect a database. We’ll find the metrics; you decide what’s true.</h1>
@@ -238,7 +268,7 @@ function Connect({ state, onDone, notify }: { state: AppState; onDone: () => voi
           )}
         </div>
       </form>
-      {state.me?.role === "admin" && <p className="connect-alt">No database yet? <a href="#hosted">Create one</a> for your app; Creama can analyse it too.</p>}
+      {state.hosting.enabled && <p className="connect-alt">No database yet? <a href="/#databases">Create one</a> for your app; Creama can analyse it too.</p>}
       <div className="trust-row">
         <span>Never writes to your database</span>
         <span title={`Model: ${state.model.name}`}>No rows sent to the AI</span>
@@ -355,13 +385,13 @@ function FirstRun({ state, reload, notify }: { state: AppState; reload: () => vo
   return (
     <div className="center">
       <div className="hero">
-        <div className="eyebrow">Connected to {state.connection?.database}</div>
+        <div className="eyebrow">{state.source?.name}</div>
         <h1>{state.run?.status === "failed" ? "Discovery didn’t finish" : "Ready when you are"}</h1>
         <p className="lead">{state.run?.error ?? (state.model.configured ? "Let Creama propose the metrics your business runs on, or write one you already know." : "Set GEMINI_API_KEY in your environment and restart Creama so it can propose metrics. You can also create a metric by hand.")}</p>
         <div className="row wrap">
           <button className="btn primary lg" disabled={!state.model.configured} onClick={async () => { try { await api("/api/discover", { body: {} }); reload(); } catch (e) { notify((e as Error).message, true); } }}>Discover metrics</button>
           <a className="btn lg" href="#new">Create metric by hand</a>
-          {state.connection?.source === "ui" && <button className="btn ghost" onClick={async () => { await api("/api/connect", { method: "DELETE" }); reload(); }}>Use another database</button>}
+          <a className="btn ghost" href="/#connect">Connect another database</a>
         </div>
       </div>
     </div>

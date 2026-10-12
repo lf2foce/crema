@@ -10,7 +10,7 @@ export const GET = handle(async ({ r, body, url }) => {
   const format = q.get("format") ?? "json";
   if (format !== "json" && format !== "csv") throw new CreamaError("format must be json or csv");
   const version = q.get("version");
-  const out = await r.query(body.key, {
+  const out = await r.query(`${body.source}/${body.key}`, {
     from: q.get("from") ?? undefined,
     to: q.get("to") ?? undefined,
     grain: (grain as Grain) || null,
@@ -27,6 +27,6 @@ function csv(out: unknown) {
     : [[o.to.slice(0, 10), o.value ?? "", "no"]];
   const lines = [["period", "value", "in_progress", "metric", "version", "trust"], ...rows.map((r) => [...r, o.metric, o.version, o.trust])];
   return new Response(lines.map((l) => l.join(",")).join("\n") + "\n", {
-    headers: { "content-type": "text/csv; charset=utf-8", "content-disposition": `inline; filename="${o.metric}.csv"`, "cache-control": "no-store" },
+    headers: { "content-type": "text/csv; charset=utf-8", "content-disposition": `inline; filename="${o.metric.replace("/", "-")}.csv"`, "cache-control": "no-store" },
   });
 }

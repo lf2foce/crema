@@ -58,13 +58,17 @@ test("set up → connect → discover → review → certify → reuse", async (
   const { metrics } = await (await request.get("/api/v1/metrics")).json();
   expect(metrics).toHaveLength(1);
   expect(metrics[0]).toMatchObject({ name, version: 1, certifiedBy: "E2E Reviewer" });
-  const values = await (await request.get(`/api/v1/metrics/${metrics[0].key}/values?grain=month`)).json();
-  expect(values).toMatchObject({ trust: "certified", certifiedBy: "E2E Reviewer" });
+  // a metric is addressed by its database: /api/v1/metrics/<database>/<key>
+  expect(metrics[0].ref).toBe(`${metrics[0].source}/${metrics[0].key}`);
+  const values = await (await request.get(`/api/v1/metrics/${metrics[0].ref}/values?grain=month`)).json();
+  expect(values).toMatchObject({ trust: "certified", certifiedBy: "E2E Reviewer", source: metrics[0].source });
   expect(values.points.length).toBeGreaterThanOrEqual(12);
   expect(values.points.at(-1).partial).toBe(true);
 
   // the schema map shows every table and what reads it
-  await page.goto("/#schema");
+  const sourcePath = new URL(page.url()).pathname; // /s/<database>
+  expect(sourcePath).toMatch(/^\/s\//);
+  await page.goto(`${sourcePath}#schema`);
   await expect(page.getByRole("button", { name: "accounts table" })).toBeVisible();
   await page.getByRole("button", { name: "subscriptions table" }).click();
   await expect(page.getByRole("heading", { name: "Read by" })).toBeVisible();
@@ -81,3 +85,4 @@ test("set up → connect → discover → review → certify → reuse", async (
   await page.screenshot({ path: "e2e/last-run.png" });
   expect(errors).toEqual([]);
 });
+

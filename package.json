@@ -9,7 +9,7 @@
     "creama": "./bin/creama.ts"
   },
   "scripts": {
-    "dev": "next dev --port 3300",
+    "dev": "tsx bin/migrate.ts && next dev --port 3300",
     "build": "next build",
     "start": "next start --port 3300",
     "demo:db": "bash demo/setup.sh",
@@ -17,7 +17,9 @@
     "mcp": "tsx bin/creama.ts mcp",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "db:migrate": "tsx bin/migrate.ts",
+    "auth:schema": "tsx bin/auth-schema.ts"
   },
   "engines": {
     "node": ">=22.13"

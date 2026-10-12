@@ -53,17 +53,17 @@ export function Overview({ state, reload, notify, back }: { state: AppState; rel
         <div className="card pad small">
           <p className="mt-0">Everything certified is served over a versioned API and an MCP server. Proposals are never visible there: consumers only ever see what a person vouched for.</p>
           <Code>{`GET ${origin}/api/v1/metrics                      # certified metrics + definitions
-GET ${origin}/api/v1/metrics/:key                 # one contract, history, audit trail
-GET ${origin}/api/v1/metrics/:key/values?grain=month&from=2026-01-01&version=1`}</Code>
+GET ${origin}/api/v1/metrics/:database/:key           # one contract, history, audit trail
+GET ${origin}/api/v1/metrics/:database/:key/values?grain=month&from=2026-01-01&version=1`}</Code>
           <p className="muted mb-0">Set <span className="mono">CREAMA_API_TOKEN</span> to require a bearer token. MCP: <span className="mono">npx tsx bin/creama.ts mcp</span>.</p>
         </div>
       </div>
 
-      {state.dismissed.length > 0 && (
+      {state.rejected.length > 0 && (
         <div className="section">
-          <div className="section-title">Dismissed</div>
+          <div className="section-title">Rejected</div>
           <div className="card">
-            {state.dismissed.map((d, i) => (
+            {state.rejected.map((d) => (
               <div key={d.id} className="row pad list-row">
                 <span className="grow">{d.name}</span>
                 <button className="btn sm ghost" onClick={async () => {
@@ -92,8 +92,8 @@ GET ${origin}/api/v1/metrics/:key/values?grain=month&from=2026-01-01&version=1`}
       )}
 
       <div className="section row">
-        <span className="grow faint small">Connected to <span className="mono">{state.connection?.display}</span>{state.connection?.source === "env" ? " (from CREAMA_DATABASE_URL)" : ""}</span>
-        {state.connection?.source === "ui" && <button className="btn sm ghost" onClick={async () => { if (!window.confirm("Disconnect this database? Certified metrics stay in the registry.")) return; await api("/api/connect", { method: "DELETE" }); reload(); }}>Disconnect</button>}
+        <span className="grow faint small"><span className="mono">{state.source?.name}</span> · {state.source?.kind === "hosted" ? "hosted by Creama" : "connected"}</span>
+        <a className="btn sm ghost" href={`/#databases/${state.source?.id}`}>Manage in Databases</a>
       </div>
 
       {payload !== null && (

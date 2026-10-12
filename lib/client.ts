@@ -1,14 +1,22 @@
 "use client";
 // Browser-side client for the Creama HTTP API.
-import type { AuditEvent, Concept, EntityReading, Metric, Run, Verification } from "@/core/types";
+import type { AuditEvent, Concept, EntityReading, Metric, Run, Source, Verification } from "@/core/types";
+
+/** A database in the workspace, with counts (from /api/state and /api/sources). */
+export type SourceInfo = Source & { metrics: number; proposals: number; attention: number; sizeBytes: number | null; connections: number | null; missing: boolean };
+export type Hosting = { enabled: boolean; reason: string | null; shared: boolean; address: string | null; ssl: boolean };
 
 export type AppState = {
-  connection: { display: string; database: string; host: string; user: string; source: "env" | "ui"; readOnly: boolean; writableTables: number } | null;
+  workspace: string;
+  sources: SourceInfo[];
+  /** the database this page is about (/s/<slug>), or null on workspace pages */
+  source: Source | null;
+  hosting: Hosting;
   model: { name: string; configured: boolean };
   run: { id: number; status: Run["status"]; startedAt: string; finishedAt: string | null; error: string | null } | null;
   understanding: { runId: number; summary: string | null; entities: EntityReading[]; model: string; at: string } | null;
   proposals: Concept[];
-  dismissed: Concept[];
+  rejected: Concept[];
   metrics: Metric[];
   demoAvailable: boolean;
   tokenRequired: boolean;
@@ -17,7 +25,12 @@ export type AppState = {
   me: Me | null;
 };
 
-export type { AuditEvent, Concept, Metric, Run, Verification };
+export type { AuditEvent, Concept, Metric, Run, Source, Verification };
+
+// The source this page works in: sent with every API call so the server scopes the request to it.
+let currentSource: string | null = null;
+export const setCurrentSource = (slug: string | null) => { currentSource = slug; };
+export const sourceHref = (slug: string, hash = "") => `/s/${encodeURIComponent(slug)}${hash ? `#${hash.replace(/^#/, "")}` : ""}`;
 
 const store = {
   get(k: string) { try { return localStorage.getItem(k); } catch { return null; } },
@@ -30,8 +43,10 @@ let me: Me | null = null;
 export const session = { me: () => me, set: (m: Me | null) => { me = m; } };
 export const actor = { get: () => me?.name || me?.email || "" };
 
-export async function api<T = any>(path: string, opts: { method?: string; body?: unknown } = {}, retried = false): Promise<T> {
+export async function api<T = any>(path: string, opts: { method?: string; body?: unknown; source?: string | null } = {}, retried = false): Promise<T> {
   const headers: Record<string, string> = { "content-type": "application/json" };
+  const source = opts.source === undefined ? currentSource : opts.source;
+  if (source) headers["x-creama-source"] = source;
   const res = await fetch(path, { method: opts.method ?? (opts.body ? "POST" : "GET"), headers, body: opts.body ? JSON.stringify(opts.body) : undefined });
   const json = await res.json().catch(() => ({}));
   // signed out (or the session expired): go sign in and come back here

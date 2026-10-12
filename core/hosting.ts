@@ -51,6 +51,13 @@ export class Hosting {
     }
   }
 
+  /** How Creama itself reaches a hosted database: through the admin host, not the public address. */
+  internalUrl(dbName: string, role: string, pw: string) {
+    const u = new URL(this.adminUrl);
+    u.username = role; u.password = pw; u.pathname = `/${dbName}`;
+    return u.toString();
+  }
+
   /** Host, port and flags for showing a connection in parts, the way database consoles do. */
   connectionParts(dbName: string, role: string, pw: string) {
     return { host: this.publicAddress.host, port: this.publicAddress.port, database: dbName, user: role, password: pw, ssl: this.publicAddress.ssl, connectionString: this.connectionString(dbName, role, pw) };
