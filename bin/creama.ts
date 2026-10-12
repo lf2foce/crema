@@ -1,0 +1,115 @@
+#!/usr/bin/env -S npx tsx
+// Creama CLI and MCP server. Same domain core as the web app; no HTTP involved.
+//   creama connect <postgres-url>
+//   creama discover [--hint "..."] [--focus "metric name"]
+//   creama list
+//   creama query <key> [--from 2026-01-01] [--to ...] [--grain month] [--version 1] [--json]
+//   creama audit
+//   creama mcp            # stdio MCP server exposing certified metrics only
+import { existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, resolve } from "node:path";
+
+const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+for (const f of [".env.local", ".env"]) {
+  const p = resolve(root, f);
+  if (existsSync(p)) process.loadEnvFile(p);
+}
+
+const { Creama, CreamaError } = await import("../core/service");
+const { display } = await import("../core/format");
+const { closePools } = await import("../core/warehouse");
+const { closeDatabases } = await import("../core/db");
+
+const [cmd, ...rest] = process.argv.slice(2);
+const flags: Record<string, string> = {};
+const args: string[] = [];
+for (let i = 0; i < rest.length; i++) {
+  if (rest[i].startsWith("--")) {
+    const k = rest[i].slice(2);
+    flags[k] = rest[i + 1] && !rest[i + 1].startsWith("--") ? rest[++i] : "true";
+  } else args.push(rest[i]);
+}
+
+const r = new Creama();
+const out = (s = "") => process.stdout.write(s + "\n");
+
+async function main() {
+  switch (cmd) {
+    case "connect": {
+      if (!args[0]) throw new CreamaError("Usage: creama connect <postgres-url>");
+      const c = await r.connect(args[0], process.env.USER ?? "cli");
+      out(`Connected to ${c.display} · ${c.tables} tables · ${c.readOnlyRole || !c.writableTables ? "read-only role" : `role can write to ${c.writableTables} tables (Creama only reads)`}`);
+      return;
+    }
+    case "discover": {
+      const id = await r.reg.createRun((await import("../core/model")).modelName(), flags.hint ?? null, flags.focus ?? null);
+      let seen = 0;
+      const timer = setInterval(async () => {
+        const steps = (await r.reg.run(id))!.steps;
+        for (; seen < steps.length; seen++) {
+          const s = steps[seen];
+          out(s.kind === "step" ? `\n● ${s.text}` : s.kind === "found" ? `  + ${s.text}` : `  ${s.text}`);
+        }
+      }, 200);
+      try {
+        await r.discover(id, { hint: flags.hint, focus: flags.focus });
+      } catch (e) {
+        await r.reg.updateRun(id, { status: "failed", error: (e as Error).message });
+        throw e;
+      } finally {
+        await new Promise((ok) => setTimeout(ok, 250));
+        clearInterval(timer);
+      }
+      out(`\nReview and certify in the web app: pnpm start → http://localhost:3300`);
+      return;
+    }
+    case "list": {
+      const ms = await r.listMetrics();
+      if (!ms.length) return out("No certified metrics yet. Run `creama discover`, then certify proposals in the web app.");
+      for (const m of ms) out(`${m.key.padEnd(28)} ${display(m.latest.value, m.unit).padStart(10)}  v${m.version} · ${m.certifiedBy} · ${m.name}`);
+      return;
+    }
+    case "query": {
+      if (!args[0]) throw new CreamaError("Usage: creama query <key> [--from] [--to] [--grain day|week|month|quarter|year] [--version n]");
+      const res: any = await r.query(args[0], { from: flags.from, to: flags.to, grain: (flags.grain as any) ?? null, version: flags.version ? Number(flags.version) : undefined });
+      if (flags.json) return out(JSON.stringify(res, null, 2));
+      out(`${res.name} · v${res.version} certified by ${res.certifiedBy}${res.trust === "drifted" ? `\n⚠ ${res.drift}` : ""}`);
+      if (res.points) for (const p of res.points) out(`  ${p.start.slice(0, 10)}  ${display(p.value, res.unit, { compact: false }).padStart(14)}`);
+      else out(`  ${display(res.value, res.unit, { compact: false })}  (${res.from.slice(0, 10)} → ${res.to.slice(0, 10)})`);
+      return;
+    }
+    case "audit": {
+      for (const e of (await r.audit(Number(flags.limit ?? 50))).reverse()) out(`${e.at.slice(0, 19).replace("T", " ")}  ${e.actor.padEnd(12)} ${e.action.padEnd(20)} ${e.subject}`);
+      return;
+    }
+    case "mcp":
+      return mcp();
+    default:
+      out("Usage: creama <connect|discover|list|query|audit|mcp> ...");
+  }
+}
+
+async function mcp() {
+  const { McpServer } = await import("@modelcontextprotocol/sdk/server/mcp.js");
+  const { StdioServerTransport } = await import("@modelcontextprotocol/sdk/server/stdio.js");
+  const { MCP_INSTRUCTIONS, MCP_TOOLS, runTool } = await import("../core/mcpTools");
+
+  const server = new McpServer({ name: "creama", version: "0.1.0" }, { instructions: MCP_INSTRUCTIONS });
+  for (const t of MCP_TOOLS) {
+    // the v1 SDK takes the raw zod shape
+    server.registerTool(t.name, { title: t.title, description: t.description, inputSchema: t.input.shape }, (a: any) => runTool(() => t.run(r, a)));
+  }
+
+  await server.connect(new StdioServerTransport());
+}
+
+try {
+  await main();
+  if (cmd !== "mcp") { await closePools(); await closeDatabases(); }
+} catch (e) {
+  process.stderr.write(`${e instanceof CreamaError ? "" : "Error: "}${(e as Error).message}\n`);
+  await closePools();
+  await closeDatabases();
+  process.exit(1);
+}
