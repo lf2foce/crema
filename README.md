@@ -89,6 +89,7 @@ Where databases are created: `CREAMA_HOSTING_ADMIN_URL` if set, otherwise the Po
 Each proposed definition is executed and inspected by code before you see it, and again at the moment you certify it:
 
 - runs as a single read-only `SELECT`; reproducible for any period (no `now()`)
+- user SQL is parsed into an AST; writes inside CTEs, row locks, unsafe functions and custom casts are rejected. Unsupported parser syntax fails closed. This supplements, not replaces, the database's read-only transaction and least-privilege role.
 - a 12-month history, plus a check that it isn't flat for lack of history
 - soft-deleted rows counted, internal/test accounts not excluded, cents not converted, currencies mixed
 - the listed rows add up to the number (that's what makes disagreements traceable)

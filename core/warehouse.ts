@@ -2,6 +2,8 @@
 // Every statement runs inside a READ ONLY transaction with a statement timeout and is
 // always rolled back. Metric SQL must be a single SELECT/WITH statement.
 import pg from "pg";
+import { validateSql } from "./sqlGuard";
+export { SqlContractError } from "./sqlGuard";
 
 // Return numerics/bigints as JS numbers; metric values are aggregates, not ledgers.
 pg.types.setTypeParser(1700, (v) => (v === null ? null : Number(v)));
@@ -55,16 +57,9 @@ export function stripSql(sql: string): string {
     .replace(/"(?:[^"]|"")*"/g, '""');
 }
 
-export class SqlContractError extends Error {}
-
 /** A metric definition is exactly one read query. The READ ONLY transaction is the real guard. */
 export function assertSingleSelect(sql: string): string {
-  const trimmed = sql.trim().replace(/;\s*$/, "");
-  const bare = stripSql(trimmed).trim();
-  if (!/^(select|with)\b/i.test(bare)) throw new SqlContractError("Definition must start with SELECT or WITH.");
-  if (bare.includes(";")) throw new SqlContractError("Definition must be a single statement.");
-  if (/\$\d/.test(bare)) throw new SqlContractError("Use {{start}}, {{end}} or {{at}} instead of $n parameters.");
-  return trimmed;
+  return validateSql(sql);
 }
 
 export type Params = { start: string; end: string; at: string };

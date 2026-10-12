@@ -25,6 +25,17 @@ describe("SQL contract", () => {
     expect(at).toEqual({ text: "select 1 where t <= $1::timestamptz", values: ["a"] });
     expect([...placeholders("{{start}} {{end}} {{at}}")]).toEqual(["start", "end", "at"]);
   });
+  it("uses AST checks for nested writes, locks, functions and quoted SQL", () => {
+    for (const sql of [
+      "WITH x AS (DELETE FROM t RETURNING *) SELECT count(*) FROM x",
+      "SELECT * FROM t FOR UPDATE", "SELECT 1 INTO t", "SELECT pg_sleep(10)",
+      "SELECT public.count(*) FROM t", "SELECT 'x'::public.dangerous_type",
+    ]) expect(() => assertSingleSelect(sql)).toThrow(SqlContractError);
+    // Unsupported PostgreSQL syntax fails closed rather than falling back to regex.
+    expect(() => assertSingleSelect("SELECT $$a;b$$ AS value")).toThrow(SqlContractError);
+    expect(assertSingleSelect("SELECT count(*) FROM t WHERE created_at >= {{start}} AND created_at < {{ end }}")).toContain("{{start}}");
+    expect(() => assertSingleSelect("select '{{at}}' as value")).toThrow(SqlContractError);
+  });
   it("evaluates every bucket of a series lateral to the bucket, never past the cap", () => {
     const s = seriesSql("select count(*) as value from t where c >= {{start}} and c < {{end}}");
     expect(s).toContain("c >= b.bucket_start and c < b.bucket_end");
