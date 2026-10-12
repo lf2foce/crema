@@ -8,7 +8,7 @@ import { compare } from "./compare";
 import { ExploreError, runSql, tableRows } from "./explore";
 import { currentCurrency, display, fmt } from "./format";
 import { Hosting, HostingError } from "./hosting";
-import { modelConfigured, modelName, thinkingLevel, type Usage } from "./model";
+import { modelConfigured, modelName, modelSettings, thinkingLevel, type Usage } from "./model";
 import { propose, repair } from "./propose";
 import { DEFAULT_WORKSPACE, implId, Registry, registry } from "./registry";
 import { introspect, modelPayload, snapshot } from "./schema";
@@ -234,7 +234,9 @@ export class Creama {
     const source = this.src();
     const running = await this.reg.latestRun(source.id);
     if (running?.status === "running") return running.id;
-    if (!modelConfigured()) throw new CreamaError("No model configured. Set GEMINI_API_KEY and restart.", 409);
+    try { modelSettings(); } catch (error) {
+      throw new CreamaError((error as Error).message, 409);
+    }
     await this.warehouse();
     const { enqueueDiscovery } = await import("./jobs");
     return enqueueDiscovery(this.reg, { workspaceId: this.scope.workspaceId, sourceId: source.id,

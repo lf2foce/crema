@@ -1,7 +1,7 @@
 #!/usr/bin/env -S npx tsx
 // Run independently of Next.js. Deploy/restart web and worker without losing queued discovery.
-import { existsSync } from "node:fs";
-for (const file of [".env.local", ".env"]) if (existsSync(file)) process.loadEnvFile(file);
+import { loadLocalEnv } from "./env";
+loadLocalEnv();
 const { Registry } = await import("../core/registry");
 const { startDiscoveryWorker, startDriftWorker, closeJobs } = await import("../core/jobs");
 const { closeDatabases } = await import("../core/db");

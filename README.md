@@ -15,19 +15,22 @@ proposed by the model  →  checked against your data  →  certified by a perso
 
 ## Quickstart
 
-Requirements: Node 22.13+, pnpm, PostgreSQL (for Creama's own state, and the demo), a Gemini API key.
+Requirements: Node 22.13+, pnpm, PostgreSQL (for Creama's own state, and the demo), an API key for an approved schema-output model (Google by default).
 
 ```sh
 pnpm install
 cp .env.example .env.local        # GEMINI_API_KEY, BETTER_AUTH_SECRET, DATABASE_URL
 createdb creama                   # Creama's state; tables are created on first start
 pnpm demo:db                      # creates the "Lumen" demo SaaS database + a read-only role
-pnpm build && pnpm start          # http://localhost:3300
-# In a separate terminal/service (required for discovery):
-pnpm worker
+pnpm dev                         # migrate, then web + worker; http://localhost:3300
+# Ctrl+C stops both. Production: migrate first, then run web and worker independently.
 ```
 
 The first person to open it creates the admin account; after that Creama is invite-only (admins add people under their name in the status bar). Email + password, or Google for invited emails when `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` are set.
+
+Docker: copy `.env.docker.example` to `.env.docker.local`, fill the secrets, then
+`docker compose --env-file .env.docker.local up --build -d`.
+See [deployment instructions](docs/deployment.md) for lifecycle, migrations and Dokploy.
 
 Each database you connect (or create) is a **source** in the workspace: it has its own schema map, tables, SQL editor, proposals and certified metrics, at `/s/<source>`. A metric always runs on the source it was certified on. Add more from **databases** in the status bar.
 

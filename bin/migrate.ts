@@ -1,12 +1,12 @@
 #!/usr/bin/env -S npx tsx
 // Applies pending migrations to DATABASE_URL (Creama's state, Better Auth's tables included).
 // Run on every deploy before starting the app; `pnpm dev` runs it too.
-import { existsSync } from "node:fs";
+import { loadLocalEnv } from "./env";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-for (const f of [".env.local", ".env"]) if (existsSync(resolve(root, f)) && !process.env.DATABASE_URL) process.loadEnvFile(resolve(root, f));
+loadLocalEnv(root);
 const { closeDatabases, migrate } = await import("../core/db");
 const pg = (await import("pg")).default;
 if (!process.env.DATABASE_URL) { console.error("DATABASE_URL is not set."); process.exit(1); }

@@ -1,0 +1,91 @@
+name: crema
+
+x-app: &app
+  image: creama:${CREAMA_IMAGE_TAG:-local}
+  build: .
+  init: true
+  cpus: ${CREAMA_APP_CPUS:-0.75}
+  mem_limit: ${CREAMA_APP_MEMORY:-512m}
+  security_opt:
+    - no-new-privileges:true
+  environment: &environment
+    NODE_ENV: production
+    DATABASE_URL: postgresql://creama:${POSTGRES_PASSWORD:?Set a URL-safe POSTGRES_PASSWORD}@postgres:5432/creama
+    APP_URL: ${APP_URL:-http://localhost:3300}
+    BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?Set BETTER_AUTH_SECRET}
+    CREAMA_SETUP_TOKEN: ${CREAMA_SETUP_TOKEN:-}
+    CREAMA_ENCRYPTION_KEY: ${CREAMA_ENCRYPTION_KEY:-}
+    CREAMA_API_TOKEN: ${CREAMA_API_TOKEN:-}
+    CREAMA_PROVIDER: ${CREAMA_PROVIDER:-google}
+    CREAMA_MODEL: ${CREAMA_MODEL:-gemini-3.8-flash}
+    CREAMA_THINKING: ${CREAMA_THINKING:-low}
+    GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+    GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+    OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    XAI_API_KEY: ${XAI_API_KEY:-}
+    ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+    GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+    CREAMA_DRIFT_CRON: ${CREAMA_DRIFT_CRON:-0 * * * *}
+    CREAMA_CURRENCY: ${CREAMA_CURRENCY:-VND}
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+services:
+  postgres:
+    image: postgres:18-bookworm
+    cpus: ${CREAMA_DB_CPUS:-0.5}
+    mem_limit: ${CREAMA_DB_MEMORY:-512m}
+    shm_size: 128m
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: creama
+      POSTGRES_DB: creama
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+    volumes:
+      # PostgreSQL 18 uses PGDATA=/var/lib/postgresql/18/docker.
+      - postgres-data:/var/lib/postgresql
+    # Deliberately no ports: only reachable on the Compose network.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U creama -d creama"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  migrate:
+    <<: *app
+    command: ["node", "--import", "tsx", "bin/migrate.ts"]
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  web:
+    <<: *app
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${CREAMA_HTTP_PORT:-3300}:3300"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3300/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+
+  worker:
+    <<: *app
+    command: ["node", "--import", "tsx", "bin/worker.ts"]
+    restart: unless-stopped
+    stop_grace_period: 60s
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+volumes:
+  postgres-data:
