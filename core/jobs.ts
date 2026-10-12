@@ -6,6 +6,7 @@ import { PgBoss, type JobWithMetadata } from "pg-boss";
 import { Registry } from "./registry";
 
 export const DISCOVERY_QUEUE = "creama-discovery";
+export const DRIFT_QUEUE = "creama-drift";
 export type DiscoveryTask = { workspaceId: string; sourceId: number; runId: number; hint: string | null; focus: string | null };
 export const discoveryPolicy = { retryLimit: 2, retryDelay: 10, retryBackoff: true, retryDelayMax: 60, expireInSeconds: 1800, heartbeatSeconds: 60 };
 const runtimes: Map<string, Promise<PgBoss>> = ((globalThis as any).__creamaJobs ??= new Map());
@@ -25,6 +26,7 @@ export async function jobs(reg: Registry): Promise<PgBoss> {
       try {
         await boss.start();
         await boss.createQueue(DISCOVERY_QUEUE, discoveryPolicy);
+        await boss.createQueue(DRIFT_QUEUE, { retryLimit: 2, retryDelay: 30, retryBackoff: true, expireInSeconds: 900, heartbeatSeconds: 60 });
         return boss;
       } catch (error) { await boss.stop().catch(() => {}); throw error; }
     })();
@@ -109,4 +111,18 @@ export async function processDiscovery(reg: Registry, job: JobWithMetadata<Disco
 export async function closeJobs() {
   const all = [...runtimes.values()]; runtimes.clear();
   await Promise.all(all.map(async (pending) => { const boss = await pending.catch(() => null); await boss?.stop({ graceful: true, timeout: 5000 }); }));
+}
+
+/** One durable hourly schedule for the current single-workspace UI. Set 'off' to disable. */
+export async function startDriftWorker(reg: Registry, cron = process.env.CREAMA_DRIFT_CRON ?? "0 * * * *") {
+  const boss = await jobs(reg);
+  if (cron === "off") { await boss.unschedule(DRIFT_QUEUE); return; }
+  await boss.schedule(DRIFT_QUEUE, cron, { workspaceId: "default" });
+  await boss.work<{ workspaceId: string }>(DRIFT_QUEUE, { batchSize: 1, localConcurrency: 1, pollingIntervalSeconds: 5 }, async (batch) => {
+    const { Creama } = await import("./service");
+    for (const job of batch) {
+      const result = await new Creama(reg, { workspaceId: job.data.workspaceId, source: null }).checkDrift();
+      if (result.errors.length) throw new Error(`Drift checks failed for ${result.errors.length} source(s); see audit.`);
+    }
+  });
 }

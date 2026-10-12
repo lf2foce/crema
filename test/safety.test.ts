@@ -54,6 +54,11 @@ suite("step 1 safety regressions", () => {
     await expect(base.query(`${source.slug}/orders`, { version: 1 })).rejects.toThrow(/needs attention/);
     expect((await svc.reg.metric(source.id, "orders"))!.status).toBe("certified");
     expect(await base.query(`${source.slug}/orders`)).toMatchObject({ version: 2, value: 1 });
+    await admin.query(`ALTER TABLE ${s}.new_orders ADD COLUMN channel text`);
+    expect(await base.checkDrift()).toMatchObject({ checked: 1, changed: 1, errors: [] });
+    expect((await svc.reg.metric(source.id, "orders"))!.status).toBe("needs_attention");
+    expect(await base.checkDrift()).toMatchObject({ changed: 0 });
+    expect((await base.audit()).filter((event) => event.action === "metric.drift_detected")).toHaveLength(1);
   });
 
   it("upgrades the released schema in place, preserves history and seals its source", async () => {

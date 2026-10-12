@@ -521,6 +521,39 @@ export class Creama {
     return (await this.reg.workspaceMetrics(this.scope.workspaceId)).map((m) => contract(m, m.sourceSlug));
   }
 
+  /** Scheduled schema-only checks: no model call and no execution of metric value queries. */
+  async checkDrift() {
+    let checked = 0, changed = 0;
+    const errors: { source: string; error: string }[] = [];
+    for (const source of await this.reg.sources(this.scope.workspaceId)) {
+      if (source.status !== "ready") continue;
+      const metrics = await this.reg.metrics(source.id);
+      if (!metrics.length) continue;
+      try {
+        const tables = await this.tables(true, source);
+        for (const metric of metrics) {
+          checked++;
+          const drift = driftedRelations(metric.current.fingerprint, tables);
+          if (!drift.length) continue;
+          const why = `Schema changed since certification in: ${drift.join(", ")}.`;
+          const updated = await this.reg.tx(async (c) => {
+            // A human may certify a new version while this scan is reading the schema.
+            const result = await c.query(`UPDATE metrics SET status = 'needs_attention', attention = $1
+              WHERE id = $2 AND current_version = $3 AND status <> 'deprecated'
+              AND (status <> 'needs_attention' OR attention IS DISTINCT FROM $1) RETURNING id`, [why, metric.id, metric.currentVersion]);
+            if (result.rowCount) await this.reg.event({ workspaceId: this.scope.workspaceId, sourceId: source.id }, "drift-monitor", "metric.drift_detected", `metric:${source.slug}/${metric.key}`, { version: metric.currentVersion, relations: drift }, c);
+            return !!result.rowCount;
+          });
+          if (updated) changed++;
+        }
+      } catch (error) {
+        errors.push({ source: source.slug, error: pgError(error) });
+        await this.ev("drift-monitor", "source.drift_check_failed", `source:${source.slug}`, { error: pgError(error) }, source);
+      }
+    }
+    return { checked, changed, errors };
+  }
+
   /** "source/key" → the metric, scoped to this workspace. */
   async resolve(ref: string): Promise<{ svc: Creama; metric: Metric }> {
     const [sourceSlug, key, extra] = ref.split("/");

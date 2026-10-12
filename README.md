@@ -128,6 +128,12 @@ the earlier proposals; certified versions remain immutable. Deploy the worker as
 not a request handler. Without it jobs remain queued. This does not provide exactly-once external model calls.
 The domain lives in `core/` and knows nothing about Next; adapters stay thin.
 
+The same worker runs a persistent hourly schema-drift schedule (`CREAMA_DRIFT_CRON`, UTC cron;
+`off` disables it). It inspects source schemas without calling Gemini or calculating metric values.
+Changed metrics become `needs_attention`; alerts are recorded in the audit log and visible in the app.
+This is schema drift, not business-semantic drift or data-freshness monitoring. No email/Telegram
+notification channel is configured. Source connection failures also appear in audit.
+
 ```
 core/warehouse.ts   read-only executor + the metric SQL contract ({{start}} {{end}} {{at}})
 core/schema.ts      introspection + profiling (the privacy boundary)

@@ -4,7 +4,7 @@ import pg from "pg";
 import { afterAll, describe, expect, it } from "vitest";
 import { Registry } from "../core/registry";
 import { closeDatabases } from "../core/db";
-import { closeJobs, DISCOVERY_QUEUE, enqueueDiscovery, jobs, processDiscovery, queueSchema, type DiscoveryTask } from "../core/jobs";
+import { closeJobs, DISCOVERY_QUEUE, DRIFT_QUEUE, enqueueDiscovery, jobs, processDiscovery, queueSchema, startDriftWorker, type DiscoveryTask } from "../core/jobs";
 
 const url = process.env.CREAMA_SAFETY_TEST_URL;
 const suite = url ? describe : describe.skip;
@@ -53,6 +53,15 @@ suite("persistent discovery", () => {
     await processDiscovery(reg, retry, execute);
     expect(executions).toBe(1); // crash after results commit does not execute the model again
   }, 15000);
+
+  it("persists the recurring drift schedule across worker restarts and can disable it", async () => {
+    await startDriftWorker(reg, "0 * * * *");
+    await closeJobs();
+    const boss = await jobs(reg);
+    expect(await boss.getSchedule(DRIFT_QUEUE)).toMatchObject({ cron: "0 * * * *" });
+    await startDriftWorker(reg, "off");
+    expect(await boss.getSchedule(DRIFT_QUEUE)).toBeNull();
+  });
 
   it("rolls back the run record when enqueue fails", async () => {
     const source = (await reg.sources("default"))[0];

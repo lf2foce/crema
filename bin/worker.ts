@@ -3,10 +3,12 @@
 import { existsSync } from "node:fs";
 for (const file of [".env.local", ".env"]) if (existsSync(file)) process.loadEnvFile(file);
 const { Registry } = await import("../core/registry");
-const { startDiscoveryWorker, closeJobs } = await import("../core/jobs");
+const { startDiscoveryWorker, startDriftWorker, closeJobs } = await import("../core/jobs");
 const { closeDatabases } = await import("../core/db");
 const { closePools } = await import("../core/warehouse");
-await startDiscoveryWorker(new Registry());
+const reg = new Registry();
+await startDiscoveryWorker(reg);
+await startDriftWorker(reg);
 console.log("Creama discovery worker ready");
 let stopping = false;
 async function stop() {
