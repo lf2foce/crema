@@ -90,8 +90,7 @@ logs: it expands runtime secrets.
 ## Dokploy / Docker Swarm
 
 Deployment target: a **new Dokploy project named `Crema`**, separate from `EXP` and
-Phê Nâu production. This document records the intended target; it does not create
-the project. Use a new state database and volume, not `phenau-pg` or its data.
+Phê Nâu production. Use a new state database and volume, not `phenau-pg` or its data.
 
 Dokploy has both **Docker Compose** and **Stack (Swarm)** deployment modes.
 Running Dokploy itself on Swarm does not mean every Compose app runs as a stack.
@@ -118,5 +117,33 @@ web and worker services. In Dokploy, route the domain to web's internal port 330
 worker has no HTTP port. Provide all envs at runtime. If a migration fails, stop
 the deployment and retain the previous image/database backup for recovery.
 
-No VPS services are modified by adding these files. Container runtime validation
-still requires a machine with Docker; local app build alone is not that test.
+### Crema test on the existing VPS
+
+Dokploy project **Crema**, Compose service **Crema test** (`phenau-crema-test-f9n3je`),
+tracks `https://github.com/lf2foce/crema.git`, branch `main`, file `./compose.yaml`.
+It has separate state and volume. All services detach from `dokploy-network`;
+only the private Compose network connects them. Auto-deploy is disabled.
+Runtime secrets are stored through Dokploy's Environment API, never in Git.
+
+The test deployment uses a prebuilt, commit-tagged image and a custom command:
+
+```sh
+compose -p phenau-crema-test-f9n3je --env-file .env -f ./compose.yaml up -d --no-build
+```
+
+Build each new image explicitly with the dedicated `phenau-crema-build` builder
+(limited to 1 CPU / 2 GB RAM), then set `CREAMA_IMAGE_TAG` before deploying.
+A Git push alone does not rebuild the image. For schema upgrades, follow the
+stop/migrate/start procedure above rather than relying on this initial-deploy command.
+
+Access from the Mac without publishing an Internet port:
+
+```sh
+ssh -N -L 127.0.0.1:13300:127.0.0.1:3300 phenau-vps
+```
+
+Open `http://localhost:13300` (matches `APP_URL`). First-account creation requires
+the setup token from the service's Environment tab. This is a test instance:
+there is no HA or scheduled state backup yet. Do not store irreplaceable state.
+Dokploy API requests can run inside its container over SSH; the public control
+domain has Cloudflare Access in addition to Dokploy's API-key authentication.
