@@ -13,7 +13,7 @@ q() { psql -h "$sock" -U "${POSTGRES_USER:-postgres}" -d "$1" -Atc "$2"; }
 until [ "$(q postgres 'SELECT pg_is_in_recovery()')" = f ]; do sleep 1; done
 echo "Restored to the last archived transaction: $(q postgres 'SELECT pg_last_xact_replay_timestamp()')"
 q postgres "SELECT datname FROM pg_database WHERE NOT datistemplate ORDER BY 1" | while read -r db; do
-  echo "  $db: $(q "$db" "SELECT count(*) || ' tables, ~' || coalesce(sum(greatest(reltuples, 0)), 0)::bigint || ' rows'
+  echo "  $db: $(q "$db" "SELECT pg_size_pretty(pg_database_size(current_database())) || ', ' || count(*) || ' tables'
     FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-    WHERE c.relkind = 'r' AND n.nspname NOT IN ('pg_catalog', 'information_schema') AND n.nspname NOT LIKE 'pg_toast%'")"
+    WHERE c.relkind IN ('r', 'p') AND n.nspname NOT IN ('pg_catalog', 'information_schema')")"
 done
