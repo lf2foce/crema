@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import { driftedRelations, fingerprint, relationsFromPlan } from "../core/verify";
 import { assertSingleSelect, bind, placeholders, seriesSql, SqlContractError } from "../core/warehouse";
 import type { Table } from "../core/types";
+import { MIGRATIONS } from "../core/migrations";
+import { breakingChanges, contractReason } from "../core/migrations/compat";
 
 describe("SQL contract", () => {
   it("accepts one SELECT/WITH and strips a trailing semicolon", () => {
@@ -145,5 +147,35 @@ describe("hosted database names", () => {
     expect(dbNameProblem("Comic")).toMatch(/Start with a letter|lowercase/);
     expect(dbNameProblem("comic-ai")).toMatch(/lowercase letters/);
     for (const n of ["postgres", "template1", "crema", "pg_stats", "crema_provisioner"]) expect(dbNameProblem(n)).toMatch(/reserved/);
+  });
+});
+
+describe("migrations: expand, then contract", () => {
+  it("lets the previous version keep running on the new schema", () => {
+    // 001–007 predate the rule (one release, nothing was running two versions at once)
+    for (const m of MIGRATIONS.filter((m) => Number(m.id.slice(0, 3)) > 7)) {
+      const breaks = breakingChanges(m.sql);
+      if (breaks.length && !contractReason(m.sql)) {
+        throw new Error(`${m.id} ${breaks.join(", ")}: the version before it still runs during a deploy. Add first and remove in a later release, marked "-- contract: <why>".`);
+      }
+    }
+  });
+  it("tells additive changes from breaking ones", () => {
+    for (const sql of [
+      "CREATE TABLE t (id int PRIMARY KEY, name text NOT NULL)",
+      "ALTER TABLE t ADD COLUMN a text, ADD COLUMN b int NOT NULL DEFAULT 0",
+      "ALTER TABLE t ADD COLUMN c int GENERATED ALWAYS AS IDENTITY",
+      "CREATE INDEX t_a ON t (a); DROP INDEX t_old; -- DROP COLUMN in a comment",
+      "ALTER TABLE t ALTER COLUMN a DROP NOT NULL",
+    ]) expect(breakingChanges(sql)).toEqual([]);
+    expect(breakingChanges("ALTER TABLE t DROP COLUMN a")).toEqual(["drops a column"]);
+    expect(breakingChanges("drop table t")).toEqual(["drops a table"]);
+    expect(breakingChanges("ALTER TABLE t RENAME COLUMN a TO b")).toEqual(["renames something"]);
+    expect(breakingChanges("ALTER TABLE t ALTER COLUMN a TYPE bigint")).toEqual(["changes a column's type"]);
+    expect(breakingChanges("ALTER TABLE t ALTER COLUMN a SET NOT NULL")).toEqual(["makes a column NOT NULL"]);
+    expect(breakingChanges("ALTER TABLE t ADD COLUMN a text NOT NULL")).toEqual(["adds NOT NULL column a without a default"]);
+    // 007 would have needed a contract step: it drops sources.name and tightens two columns
+    expect(breakingChanges(MIGRATIONS.find((m) => m.id === "007_projects")!.sql)).toContain("drops a column");
+    expect(contractReason("-- contract: 1.4 stopped reading sources.name\nALTER TABLE sources DROP COLUMN name")).toBe("1.4 stopped reading sources.name");
   });
 });

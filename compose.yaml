@@ -2,10 +2,8 @@ name: crema
 
 x-app: &app
   # the published image (amd64 + arm64): :latest follows main, :sha-<commit> and :<version> are fixed.
-  # `docker compose build` builds it from this checkout instead.
+  # `docker compose pull` fetches a newer one; `docker compose build` builds it from this checkout.
   image: ${CREMA_IMAGE:-ghcr.io/lf2foce/crema}:${CREMA_IMAGE_TAG:-latest}
-  # always: every `up` fetches the tag again (what the test deployment uses); missing: only once
-  pull_policy: ${CREMA_PULL_POLICY:-missing}
   build: .
   init: true
   cpus: ${CREMA_APP_CPUS:-0.75}
@@ -101,8 +99,10 @@ services:
     restart: unless-stopped
     # explicit, so a platform that adds its proxy network (Dokploy, for a domain) keeps this one too
     networks: [default]
+    # Set CREMA_HTTP_PORT empty (not unset) for a random host port, when a proxy on this network
+    # serves it and a rollout runs two web containers side by side (docs/deployment.md).
     ports:
-      - "127.0.0.1:${CREMA_HTTP_PORT:-3300}:3300"
+      - "127.0.0.1:${CREMA_HTTP_PORT-3300}:3300"
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -110,8 +110,10 @@ services:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3300/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 30s
       timeout: 5s
-      start_period: 30s
+      start_period: 60s
+      start_interval: 2s # healthy within seconds of starting, so a rollout switches over quickly
       retries: 3
+    stop_grace_period: 20s
 
   worker:
     <<: *app

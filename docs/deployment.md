@@ -80,15 +80,18 @@ This is a fresh PostgreSQL 18 deployment, not an in-place major-version upgrade.
 If you already have a PostgreSQL 17 data volume, migrate with dump/restore or a
 proper `pg_upgrade` procedure; do not point the 18 image at the 17 data directory.
 
-For an upgrade, stop web and worker first, migrate explicitly, then start them:
+To upgrade, fetch the new image, migrate while the current version keeps serving
+(migrations are expand-only, see below), then restart web and worker on it:
 
 ```sh
-docker compose --env-file .env.docker.local pull web
-docker compose --env-file .env.docker.local stop web worker
-docker compose --env-file .env.docker.local run --rm migrate
+docker compose --env-file .env.docker.local pull migrate web worker
+docker compose --env-file .env.docker.local run --rm -T migrate
 # Only if migration succeeded:
 docker compose --env-file .env.docker.local up -d web worker
 ```
+
+Web is down for the few seconds it takes to start. Behind a proxy on the Compose
+network, the rollout below avoids even that.
 
 Back up the state DB before upgrading. Queue state is durable in Postgres; restarting
 only worker does not lose queued jobs. An interrupted discovery may run again and
@@ -116,35 +119,44 @@ time someone creates a database. Apps connect on `CREMA_HOSTING_PORT` (5433) at
 volume: changing either password later means `ALTER ROLE` inside the container too.
 Back the volume up at the cluster level; it holds your apps' data.
 
-## Dokploy / Docker Swarm
+## Migrations: expand, then contract
+
+A deploy runs migrations while the previous version is still serving, and during a
+rollout the previous and the new web run side by side. So a migration may only add:
+new tables, nullable columns or columns with a default, indexes. Dropping, renaming,
+retyping or tightening (`SET NOT NULL`) something an earlier version uses is a later
+migration, shipped once no running version needs it, with a `-- contract: <why>` line.
+To rename a column: add the new one and write both (release 1), backfill and read the
+new one (release 2), drop the old one marked as a contract (release 3).
+`core/migrations/compat.ts` flags the breaking statements; the unit tests fail on an
+unmarked one from migration 008 on.
+
+## Zero-downtime rollout
+
+With a reverse proxy that follows containers on the Compose network and routes
+only to healthy ones (Traefik does, so Dokploy does), web can be replaced without a gap:
+
+```sh
+docker compose up -d --wait postgres hosting
+docker compose pull migrate web worker
+docker compose run --rm -T migrate                  # the current web keeps serving
+docker compose up -d --no-deps --no-recreate --scale web=2 --wait --wait-timeout 180 web
+docker compose up -d --no-deps --scale web=1 web    # removes the outdated container first
+docker compose up -d --no-deps worker               # its queue is durable; jobs resume
+```
+
+Two web containers can't bind the same host port: set `CREMA_HTTP_PORT` to empty.
+If migration fails, nothing after it runs and the current version stays up. If the
+new web never becomes healthy, `--wait` fails and the proxy keeps routing to the
+current one; remove the unhealthy container after reading its logs. Postgres is
+never run twice: it is only started when it isn't running.
+
+## Dokploy
 
 Deployment target: a **new Dokploy project named `Crema`**, separate from `EXP` and
 Phê Nâu production. Use a new state database and volume, not `phenau-pg` or its data.
-
-Dokploy has both **Docker Compose** and **Stack (Swarm)** deployment modes.
-Running Dokploy itself on Swarm does not mean every Compose app runs as a stack.
-The supplied file targets Compose mode and does not implement a start-first rollout.
-See [Dokploy Compose modes](https://docs.dokploy.com/docs/core/docker-compose).
-
-For a future Swarm rollout, web can use `update_config.order: start-first`, through
-a reverse proxy with no conflicting host-mode port, after compatible migrations
-have succeeded. New and old tasks overlap; this does not by itself guarantee
-zero downtime or application readiness. Add a real readiness gate and verify
-routing before retiring the old task. Use **stop-first** for the single Postgres
-instance: two processes must not mount the same data directory concurrently.
-Keep worker stop-first initially; its durable queue survives replacement, but
-active model requests are not resumable checkpoints or exactly-once operations.
-An incompatible schema migration still requires a maintenance window, or an
-expand/contract migration spanning multiple releases. Do not apply rolling update
-settings to all three services indiscriminately.
-
-This file is for ordinary Docker Compose. Swarm stack deployment does not provide
-the same migration dependency gate; do not paste it unchanged into a Swarm stack
-and assume migrations completed. Build/publish the common image, run migrations
-as an explicit deployment step with the state URL, and only then deploy separate
-web and worker services. In Dokploy, route the domain to web's internal port 3300;
-worker has no HTTP port. Provide all envs at runtime. If a migration fails, stop
-the deployment and retain the previous image/database backup for recovery.
+Use Dokploy's **Docker Compose** mode with this file; route the domain to `web`,
+port 3300. Provide all envs at runtime.
 
 ### Crema test on the existing VPS
 
@@ -158,21 +170,13 @@ Deploys are automatic: after CI publishes `:latest`, its `deploy` job calls the
 service's Dokploy deploy hook (GitHub secret `DOKPLOY_DEPLOY_HOOK`, environment
 `test`), then waits until `/api/version` reports the new commit. Dokploy has no
 GitHub webhook of its own, so it never deploys a commit whose image isn't built yet.
-The service's env sets `CREMA_PULL_POLICY=always` and its command is:
-
-```sh
-compose -p phenau-crema-test-f9n3je --env-file .env -f ./compose.yaml up -d --no-build
-```
+Its env sets `CREMA_HTTP_PORT=` (empty) and its command is the rollout above, each
+step as `docker compose -p phenau-crema-test-f9n3je --env-file .env -f ./compose.yaml …`
+joined with `&&` (Dokploy's command field accepts only chained `docker compose` calls,
+and prefixes the first with `docker`).
 
 Nothing is built on the VPS. To roll back, set `CREMA_IMAGE_TAG=sha-<commit>` in
-Dokploy's environment and redeploy; set it back to `latest` afterwards. For schema
-upgrades, follow the stop/migrate/start procedure above rather than relying on this command.
-
-Access from the Mac without publishing an Internet port:
-
-```sh
-ssh -N -L 127.0.0.1:13300:127.0.0.1:3300 phenau-vps
-```
+Dokploy's environment and redeploy; set it back to `latest` afterwards.
 
 Open `https://crema.phenau.com`. The first admin is created from the one-time setup
 link in the `web` service's log (Dokploy → Logs). This is a test instance:
