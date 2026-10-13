@@ -6,7 +6,6 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import pg from "pg";
 import { randomUUID } from "node:crypto";
 import { Hosting, password } from "../core/hosting";
-import { suggestDbName } from "../lib/dbName";
 
 const ADMIN = process.env.CREMA_TEST_HOSTING_ADMIN_URL ?? "postgresql://localhost:5432/postgres";
 let h: Hosting;
@@ -14,7 +13,7 @@ let h: Hosting;
 const make = (dbName: string) => ({ dbName, token: randomUUID(), ownerPassword: password(), readerPassword: password() });
 let provisioner = "";
 const tag = `t${process.pid}`;
-const A = suggestDbName(`ztest ${tag} a`), B = suggestDbName(`ztest ${tag} b`);
+const A = `ztest_${tag}_a`, B = `ztest_${tag}_b`;
 const TA = make(A), TB = make(B);
 let available = true;
 
@@ -105,7 +104,7 @@ describe("hosted databases", () => {
 
   it("resumes an interrupted attempt with the same token, and never adopts a stranger's", async () => {
     if (!available) return;
-    const C = suggestDbName(`ztest ${tag} c`), TC = make(C);
+    const C = `ztest_${tag}_c`, TC = make(C);
     const admin = new pg.Client({ connectionString: ADMIN }); await admin.connect();
     try {
       // a crash after the roles were made: create the owner role the way an attempt would have

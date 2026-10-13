@@ -5,7 +5,7 @@
 //   - Everything analytical belongs to one source. A metric runs on the source it was certified on,
 //     never on "whatever is connected", and is not served while its tables have drifted.
 import { randomUUID } from "node:crypto";
-import { dbNameProblem, suggestDbName } from "../lib/dbName";
+import { dbNameProblem, naturalDbName } from "../lib/dbName";
 import { compare } from "./compare";
 import { ExploreError, runSql, tableRows } from "./explore";
 import { currentCurrency, display, fmt } from "./format";
@@ -212,7 +212,7 @@ export class Crema {
 
   /**
    * `name` is what people see (and can change later); `dbName` is the database's name on the server,
-   * suggested from `name` unless given, and fixed for life.
+   * a natural random one (young_art_a7k2) unless given, and fixed for life.
    */
   async createHosted(name: string, actor: string, serverId?: number | null, dbNameInput?: string | null) {
     let servers = await this.reg.servers(this.scope.workspaceId);
@@ -222,12 +222,22 @@ export class Crema {
     if (!server) throw new CremaError(servers.length ? "Choose the server to create it on." : "Add a Postgres server first: Crema creates databases on a server you give it.", servers.length ? 400 : 409);
     const h = await this.hostingFor(server.id);
     if (!name?.trim()) throw new CremaError("Give the database a name.");
-    const dbName = (dbNameInput ?? "").trim() || suggestDbName(name);
-    const problem = dbNameProblem(dbName);
-    if (problem) throw new CremaError(dbNameInput ? problem : "Give it a name with letters, or choose the database name yourself.");
-    if ((await this.reg.sources(this.scope.workspaceId)).some((s) => s.serverId === server.id && s.dbName === dbName)) throw new CremaError(`A database named “${dbName}” already exists on ${server.name}.`, 409);
+    const known = (await this.reg.sources(this.scope.workspaceId)).filter((s) => s.serverId === server.id).map((s) => s.dbName);
+    let dbName = (dbNameInput ?? "").trim();
+    if (dbName) {
+      const problem = dbNameProblem(dbName);
+      if (problem) throw new CremaError(problem);
+      if (known.includes(dbName)) throw new CremaError(`A database named “${dbName}” already exists on ${server.name}.`, 409);
+    } else {
+      // a fresh random name, free on the server (a collision is rare; try a few)
+      for (let i = 0; i < 5 && !dbName; i++) {
+        const candidate = naturalDbName();
+        if (!known.includes(candidate) && !(await h.taken(candidate).catch((e) => { throw hostingError(e); })).length) dbName = candidate;
+      }
+      if (!dbName) throw new CremaError("Couldn’t find a free database name. Try again.", 409);
+    }
     const source = await this.reg.addSource(this.scope.workspaceId, {
-      slug: await this.reg.freeSlug(this.scope.workspaceId, dbName), name: name.trim().slice(0, 80),
+      slug: await this.reg.freeSlug(this.scope.workspaceId, slugify(name)), name: name.trim().slice(0, 80),
       kind: "hosted", status: "provisioning", dbName, readOnly: true, serverId: server.id,
     }, actor);
     await this.provision(h, source, actor);

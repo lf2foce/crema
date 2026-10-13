@@ -62,7 +62,12 @@ test("add a server → create a database → connect → delete → remove the s
   // a database for an app, with its connection string on the public address, TLS required
   await page.getByRole("button", { name: "+ New database" }).click();
   await page.getByLabel("Name").fill("E2E Shop");
-  await expect(page.getByText("Logins e2e_shop_owner for your app")).toBeVisible(); // suggested, no prefix
+  // a natural random name, Neon-style; ↻ gives another
+  const suggested = page.locator(".use-note .mono").first();
+  await expect(suggested).toHaveText(/^[a-z]+_[a-z]+_[a-z0-9]{4}$/);
+  const firstName = await suggested.textContent();
+  await page.getByRole("button", { name: "Shuffle" }).click();
+  await expect(suggested).not.toHaveText(firstName!);
   // editable before creation; reserved and taken names are refused as you type
   await page.getByRole("button", { name: "Edit" }).click();
   const dbField = page.getByLabel("Database name");

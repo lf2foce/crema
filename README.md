@@ -80,7 +80,7 @@ pnpm crema audit
 
 ## Hosted databases
 
-Admins can create Postgres databases for apps built elsewhere (Databases → New database), Neon-style: pick a database, choose the login, copy the connection string or a ready snippet (`.env`, psql, Node.js, Drizzle, Python). Give it a display name; the database name is suggested from it (`ComicAI` → `comicai`, no prefix), can be edited before creating, and is checked as you type against reserved names and everything already on the server. It never changes afterwards; the display name can. Each database gets:
+Admins can create Postgres databases for apps built elsewhere (Databases → New database), Neon-style: pick a database, choose the login, copy the connection string or a ready snippet (`.env`, psql, Node.js, Drizzle, Python). Give it a display name; the database gets a natural random name, Neon-style (`young_art_a7k2`; ↻ for another), which can be edited before creating (`comicai`), and is checked as you type against reserved names and everything already on the server. It never changes afterwards; the display name can. Each database gets:
 
 - an owner login for the app: read/write in its own database only (no superuser, can't create roles or databases, 20 connections)
 - a read-only login Crema uses when you choose **Use in Crema**, so the app's data can be discovered and certified like any other source

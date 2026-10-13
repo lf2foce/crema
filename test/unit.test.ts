@@ -1,4 +1,4 @@
-import { DB_NAME_MAX, dbNameProblem, suggestDbName } from "../lib/dbName";
+import { dbNameProblem, naturalDbName } from "../lib/dbName";
 import { afterEach, describe, expect, it } from "vitest";
 import { display, setCurrency } from "../core/format";
 import { driftedRelations, fingerprint, relationsFromPlan } from "../core/verify";
@@ -154,13 +154,13 @@ describe("sealed secrets", async () => {
 });
 
 describe("hosted database names", () => {
-  it("suggests a clean name from the display name, no forced prefix", () => {
-    expect(suggestDbName("ComicAI")).toBe("comicai");
-    expect(suggestDbName("Đặt lịch 2026")).toBe("dat_lich_2026");
-    expect(suggestDbName("99 problems")).toBe("db_99_problems");
-    expect(suggestDbName("Postgres")).toBe(""); // reserved: people choose
-    expect(suggestDbName("!!!")).toBe("");
-    expect(suggestDbName("x".repeat(60))).toHaveLength(DB_NAME_MAX);
+  it("suggests natural random names, Neon-style, always valid", () => {
+    const names = Array.from({ length: 200 }, naturalDbName);
+    for (const n of names) {
+      expect(n).toMatch(/^[a-z]+_[a-z]+_[a-z0-9]{4}$/);
+      expect(dbNameProblem(n)).toBeNull();
+    }
+    expect(new Set(names).size).toBeGreaterThan(195); // random, not a short cycle
   });
   it("explains why a name can't be used", () => {
     expect(dbNameProblem("comicai")).toBeNull();

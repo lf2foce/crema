@@ -1,18 +1,35 @@
 // Names of hosted databases: one set of rules for the form (as people type) and the server (which
-// decides). People give a display name; the database name is suggested from it and can be edited
-// before creation, Neon-style, with no forced prefix. It never changes afterwards; the display name can.
+// decides). A new database gets a natural random name, Neon-style (young_art_a7k2): readable, unlikely
+// to collide, and saying nothing about the project. People can pick another or type their own before
+// creating it. It never changes afterwards; the display name ("ComicAI") is separate and can.
 // Roles are `<db>_owner` and `<db>_crema`, so a name stays well under Postgres's 63-character limit.
 
 export const DB_NAME_MAX = 38;
 const RESERVED = new Set(["postgres", "template0", "template1", "crema", "public", "information_schema"]);
 
-/** "ComicAI" → "comicai", "Đặt lịch 2026" → "dat_lich_2026", "99 problems" → "db_99_problems". */
-export function suggestDbName(display: string): string {
-  let s = display.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/đ/g, "d")
-    .replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
-  if (/^[0-9]/.test(s)) s = `db_${s}`;
-  s = s.slice(0, DB_NAME_MAX).replace(/_+$/, "");
-  return dbNameProblem(s) ? "" : s;
+// short, plain, nature-ish words: names read well in a connection string and in a log
+const words = (s: string) => [...new Set(s.split(/\s+/).filter(Boolean))];
+const ADJECTIVES = words(`young quiet bold calm misty silent wispy lucky gentle bright still rapid round broad
+  cool crisp deep fresh frosty green icy jolly little lively lone noisy polished proud purple red shiny
+  small snowy spring summer sweet tiny twilight wandering white wild winter yellow ancient autumn blue
+  cold cosmic curly damp golden hidden long patient plain royal steep sunny velvet amber silver`);
+const NOUNS = words(`art river star moon sun cloud field forest glade hill lake leaf meadow mountain night ocean
+  paper pine pond rain sea shadow sky smoke snow sound breeze brook bird cherry dew dream feather fire
+  firefly flower fog frog frost grass haze heart morning poetry scene shape silence snowflake sunset surf
+  thunder tree violet voice water wave wind wood butterfly cake island harbor canyon comet ember fern`);
+const ALPHANUM = "abcdefghijklmnopqrstuvwxyz0123456789";
+
+function randomInts(n: number): number[] {
+  const a = new Uint32Array(n);
+  globalThis.crypto.getRandomValues(a); // browsers and Node alike
+  return [...a];
+}
+
+/** A natural random name: young_art_a7k2. */
+export function naturalDbName(): string {
+  const [i, j, ...rest] = randomInts(6);
+  const suffix = rest.map((r) => ALPHANUM[r % ALPHANUM.length]).join("");
+  return `${ADJECTIVES[i % ADJECTIVES.length]}_${NOUNS[j % NOUNS.length]}_${suffix}`;
 }
 
 /** Why this can't be a database name, or null when it can. */
