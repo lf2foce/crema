@@ -4,7 +4,7 @@ import { expect, test } from "@playwright/test";
 // Hosting the production way (`next start`): no "use this machine" shortcut, a server added from a
 // superuser login that Crema trades for its own limited provisioner. Uses the local cluster.
 const ADMIN_URL = "postgresql://localhost:5432/postgres";
-const DB = "app_e2e_shop";
+const DB = "e2e_shop";
 const psql = (sql: string) => execFileSync("psql", ["-d", "postgres", "-Atc", sql], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
 const cleanup = () => {
   psql(`DROP DATABASE IF EXISTS ${DB} WITH (FORCE)`);
@@ -58,7 +58,20 @@ test("add a server → create a database → connect → delete → remove the s
   // a database for an app, with its connection string on the public address, TLS required
   await page.getByRole("button", { name: "+ New database" }).click();
   await page.getByLabel("Name").fill("E2E Shop");
-  await page.getByRole("button", { name: "Create" }).click();
+  await expect(page.getByText("Logins e2e_shop_owner for your app")).toBeVisible(); // suggested, no prefix
+  // editable before creation; reserved and taken names are refused as you type
+  await page.getByRole("button", { name: "Edit" }).click();
+  const dbField = page.getByLabel("Database name");
+  await dbField.fill("postgres");
+  await expect(page.getByText("“postgres” is reserved.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Create database" })).toBeDisabled();
+  await dbField.fill("template_taken_probe");
+  psql("CREATE ROLE template_taken_probe_owner");
+  await dbField.fill("template_taken_prob"); await dbField.fill("template_taken_probe"); // re-check after the role exists
+  await expect(page.getByText("“template_taken_probe_owner” already exists on this server.")).toBeVisible();
+  psql("DROP ROLE template_taken_probe_owner");
+  await dbField.fill(DB);
+  await page.getByRole("button", { name: "Create database" }).click();
   await expect(page.getByText(`${DB} is ready.`)).toBeVisible();
   await expect(page.getByRole("heading", { name: "E2E Shop" })).toBeVisible();
   await expect(page.getByText("on db.example.com")).toBeVisible();

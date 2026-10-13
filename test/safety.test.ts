@@ -20,12 +20,15 @@ afterAll(async () => {
 
 suite("step 1 safety regressions", () => {
   it("does not delete an existing database when provisioning or retry collides", async () => {
-    const name = `app_safety_${randomUUID().replaceAll("-", "").slice(0, 12)}`;
+    const name = `safety_${randomUUID().replaceAll("-", "").slice(0, 12)}`;
     await admin.query(`CREATE DATABASE ${name}`);
     const svc = new Crema(new Registry(url, { schema: schema() }));
     const { createdProvisioner } = await svc.addServer({ url: url! }, "test");
     try {
-      await expect(svc.createHosted(name.replace(/^app_/, ""), "test")).rejects.toThrow(/already exists/);
+      // the form sees it's taken (somebody else's database), and creating it anyway fails safely
+      expect(await svc.checkDbName((await svc.servers())[0].id, name)).toEqual({ ok: false, reason: `“${name}” already exists on this server.` });
+      expect(await svc.checkDbName((await svc.servers())[0].id, "template1")).toMatchObject({ ok: false, reason: expect.stringMatching(/reserved/) });
+      await expect(svc.createHosted("Safety", "test", null, name)).rejects.toThrow(/already exists/);
       const failed = (await svc.reg.sources("default"))[0];
       expect(failed.status).toBe("failed");
       await expect(svc.retryHosted(failed.id, "test")).rejects.toThrow(/already exists/);
@@ -54,9 +57,10 @@ suite("step 1 safety regressions", () => {
 
     const stranger = `stranger_${randomUUID().replaceAll("-", "").slice(0, 8)}`;
     await admin.query(`CREATE ROLE ${stranger} LOGIN`);
-    const dbName = `app_life_${randomUUID().replaceAll("-", "").slice(0, 8)}`;
+    const dbName = `life_${randomUUID().replaceAll("-", "").slice(0, 8)}`;
     try {
-      const source = await svc.createHosted(dbName.replace(/^app_/, ""), "test");
+      const source = await svc.createHosted("Life Cycle", "test", null, dbName); // display name ≠ database name
+      expect(source).toMatchObject({ name: "Life Cycle", dbName });
       expect(source).toMatchObject({ status: "ready", serverId: server.id, dbName });
       const conn = await svc.hostedConnection(source.id, "owner");
       expect(conn).toMatchObject({ host: "db.example.com", port: 6543, ssl: true, user: `${dbName}_owner` });

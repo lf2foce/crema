@@ -9,6 +9,7 @@
 import { randomBytes } from "node:crypto";
 import pg from "pg";
 import { quoteIdent } from "./warehouse";
+import { dbNameProblem } from "../lib/dbName";
 
 export class HostingError extends Error {}
 
@@ -90,11 +91,12 @@ export class Hosting {
     return { host: this.publicAddress.host, port: this.publicAddress.port, database: dbName, user: role, password: pw, ssl: this.publicAddress.ssl, connectionString: this.connectionString(dbName, role, pw) };
   }
 
-  /** `app_` + a slug of the name people typed. */
-  static dbNameFor(name: string): string {
-    const slug = name.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/đ/g, "d").replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 30);
-    if (!slug) throw new HostingError("Give the database a name with letters or digits.");
-    return `app_${slug}`;
+  /** What on this server already uses the name: the database, or either role it would need. */
+  async taken(dbName: string): Promise<string[]> {
+    const r = await this.admin((c) => c.query<{ name: string }>(
+      "SELECT datname AS name FROM pg_database WHERE datname = $1 UNION ALL SELECT rolname FROM pg_roles WHERE rolname = ANY($2)",
+      [dbName, [dbName, `${dbName}_owner`, `${dbName}_crema`]]));
+    return r.rows.map((x) => x.name);
   }
 
   connectionString(dbName: string, role: string, pw: string) {
@@ -134,7 +136,7 @@ export class Hosting {
    * that carried the same token (a crash part-way can be retried). Never adopts anything else.
    */
   async create(dbName: string, p: { token: string; ownerPassword: string; readerPassword: string }): Promise<{ owner: string; reader: string }> {
-    if (!NAME.test(dbName)) throw new HostingError(`Invalid database name “${dbName}”.`);
+    if (!NAME.test(dbName) || dbNameProblem(dbName)) throw new HostingError(`Invalid database name “${dbName}”.`);
     if (!/^[0-9a-f-]{36}$/.test(p.token)) throw new HostingError("Invalid provisioning token.");
     const owner = `${dbName}_owner`, reader = `${dbName}_crema`, mark = literal(p.token);
     await this.admin(async (c) => {

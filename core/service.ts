@@ -5,6 +5,7 @@
 //   - Everything analytical belongs to one source. A metric runs on the source it was certified on,
 //     never on "whatever is connected", and is not served while its tables have drifted.
 import { randomUUID } from "node:crypto";
+import { dbNameProblem, suggestDbName } from "../lib/dbName";
 import { compare } from "./compare";
 import { ExploreError, runSql, tableRows } from "./explore";
 import { currentCurrency, display, fmt } from "./format";
@@ -199,7 +200,21 @@ export class Crema {
    * Creates a database for an app and adds it as a source. The source row comes first (status
    * "provisioning"), so a failure part-way leaves a visible, retryable record instead of orphans.
    */
-  async createHosted(name: string, actor: string, serverId?: number | null) {
+  /** Can this database name be created on the server? For the form, as people type. */
+  async checkDbName(serverId: number, dbName: string): Promise<{ ok: boolean; reason: string | null }> {
+    const problem = dbNameProblem(dbName);
+    if (problem) return { ok: false, reason: problem };
+    const h = await this.hostingFor(serverId);
+    let taken: string[];
+    try { taken = await h.taken(dbName); } catch (e) { throw hostingError(e); }
+    return taken.length ? { ok: false, reason: `“${taken[0]}” already exists on this server.` } : { ok: true, reason: null };
+  }
+
+  /**
+   * `name` is what people see (and can change later); `dbName` is the database's name on the server,
+   * suggested from `name` unless given, and fixed for life.
+   */
+  async createHosted(name: string, actor: string, serverId?: number | null, dbNameInput?: string | null) {
     let servers = await this.reg.servers(this.scope.workspaceId);
     // Neon-style: the first database goes on the installation's own server, added on the way
     if (!servers.length && suggestedServer()) { await this.addSuggestedServer(actor); servers = await this.reg.servers(this.scope.workspaceId); }
@@ -207,11 +222,12 @@ export class Crema {
     if (!server) throw new CremaError(servers.length ? "Choose the server to create it on." : "Add a Postgres server first: Crema creates databases on a server you give it.", servers.length ? 400 : 409);
     const h = await this.hostingFor(server.id);
     if (!name?.trim()) throw new CremaError("Give the database a name.");
-    let dbName: string;
-    try { dbName = Hosting.dbNameFor(name); } catch (e) { throw hostingError(e); }
+    const dbName = (dbNameInput ?? "").trim() || suggestDbName(name);
+    const problem = dbNameProblem(dbName);
+    if (problem) throw new CremaError(dbNameInput ? problem : "Give it a name with letters, or choose the database name yourself.");
     if ((await this.reg.sources(this.scope.workspaceId)).some((s) => s.serverId === server.id && s.dbName === dbName)) throw new CremaError(`A database named “${dbName}” already exists on ${server.name}.`, 409);
     const source = await this.reg.addSource(this.scope.workspaceId, {
-      slug: await this.reg.freeSlug(this.scope.workspaceId, dbName.replace(/^app_/, "")), name: name.trim().slice(0, 80),
+      slug: await this.reg.freeSlug(this.scope.workspaceId, dbName), name: name.trim().slice(0, 80),
       kind: "hosted", status: "provisioning", dbName, readOnly: true, serverId: server.id,
     }, actor);
     await this.provision(h, source, actor);

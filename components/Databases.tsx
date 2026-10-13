@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { ago, api, sourceHref, type AppState, type ServerInfo, type SourceInfo } from "@/lib/client";
 import { Copy, Modal } from "./ui";
+import { DB_NAME_MAX, dbNameProblem, suggestDbName } from "@/lib/dbName";
 
 type Conn = { host: string; port: number; database: string; user: string; password: string; ssl: boolean; connectionString: string };
 type Role = "owner" | "reader";
@@ -94,25 +95,45 @@ export function Databases({ state, selected, server, notify, reload }: { state: 
 
 function NewDatabase({ servers, notify, onClose, onCreated }: { servers: ServerInfo[]; notify: (t: string, e?: boolean) => void; onClose: () => void; onCreated: (id: number) => void }) {
   const [name, setName] = useState("");
+  const [custom, setCustom] = useState<string | null>(null); // the database name, once someone edits it
   const [serverId, setServerId] = useState(servers[0]?.id ?? 0);
+  const [check, setCheck] = useState<{ db: string; ok: boolean; reason: string | null } | null>(null);
   const [busy, setBusy] = useState(false);
-  const slug = name.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/đ/g, "d").replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 30);
+  const dbName = custom ?? suggestDbName(name);
+  const problem = dbName ? dbNameProblem(dbName) : null;
+
+  // is it free on the server? (only once a server exists: the first one is added on create)
+  useEffect(() => {
+    if (!dbName || problem || !serverId) { setCheck(null); return; }
+    const t = setTimeout(() => {
+      api<{ ok: boolean; reason: string | null }>(`/api/servers/${serverId}/name?db=${encodeURIComponent(dbName)}`, { source: null })
+        .then((r) => setCheck({ db: dbName, ...r })).catch(() => setCheck(null));
+    }, 300);
+    return () => clearTimeout(t);
+  }, [dbName, problem, serverId]);
+  const status = !dbName ? null : problem ? problem : check?.db === dbName && !check.ok ? check.reason : null;
+
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setBusy(true);
-    try { const r = await api<{ source: { id: number; dbName: string } }>("/api/sources", { body: { kind: "hosted", name, serverId }, source: null }); notify(`${r.source.dbName} is ready.`); onCreated(r.source.id); }
+    try { const r = await api<{ source: { id: number; dbName: string } }>("/api/sources", { body: { kind: "hosted", name, dbName, serverId: serverId || null }, source: null }); notify(`${r.source.dbName} is ready.`); onCreated(r.source.id); }
     catch (err) { notify((err as Error).message, true); setBusy(false); }
   };
   return (
     <Modal onClose={onClose}>
       <form className="stack" onSubmit={submit}>
         <h2 className="schema-h m-0">New database</h2>
-        <label className="field">Name<input className="input" autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="Booking app" maxLength={60} required /></label>
+        <label className="field">Name<input className="input" autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="ComicAI" maxLength={80} required /></label>
+        {custom === null ? (
+          <p className="use-note m-0 row gap-2">Database <span className="mono">{dbName || "…"}</span><button type="button" className="btn ghost sm" onClick={() => setCustom(dbName)}>Edit</button></p>
+        ) : (
+          <label className="field">Database name<input className="input mono" value={custom} onChange={(e) => setCustom(e.target.value.toLowerCase())} maxLength={DB_NAME_MAX} spellCheck={false} aria-invalid={!!status} /></label>
+        )}
+        {status ? <p className="small text-warn m-0">{status}</p> : dbName && <p className="use-note m-0">Logins <span className="mono">{dbName}_owner</span> for your app and <span className="mono">{dbName}_crema</span> (read-only) for Crema. The database name can’t change later; the display name can.</p>}
         {servers.length > 1 && <label className="field">Server<select className="select" value={serverId} onChange={(e) => setServerId(Number(e.target.value))}>
           {servers.map((v) => <option key={v.id} value={v.id}>{v.name} · {v.publicHost}</option>)}
         </select></label>}
-        <p className="use-note m-0">Database <span className="mono">{slug ? `app_${slug}` : "app_…"}</span>, login <span className="mono">{slug ? `app_${slug}_owner` : "…_owner"}</span> for your app, and a read-only login for Crema.</p>
-        <div className="row"><span className="grow" /><button type="button" className="btn" onClick={onClose}>Cancel</button><button className="btn primary" disabled={busy || !slug}>{busy ? <span className="spin" /> : "Create"}</button></div>
+        <div className="row"><span className="grow" /><button type="button" className="btn" onClick={onClose}>Cancel</button><button className="btn primary" disabled={busy || !dbName || !!status}>{busy ? <span className="spin" /> : "Create database"}</button></div>
       </form>
     </Modal>
   );

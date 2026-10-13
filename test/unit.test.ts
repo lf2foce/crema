@@ -1,3 +1,4 @@
+import { DB_NAME_MAX, dbNameProblem, suggestDbName } from "../lib/dbName";
 import { afterEach, describe, expect, it } from "vitest";
 import { display, setCurrency } from "../core/format";
 import { driftedRelations, fingerprint, relationsFromPlan } from "../core/verify";
@@ -149,5 +150,23 @@ describe("sealed secrets", async () => {
     const parts = a.split(".");
     parts[3] = parts[3].slice(0, -2) + (parts[3].endsWith("AA") ? "BB" : "AA");
     expect(() => unseal(parts.join("."))).toThrow();
+  });
+});
+
+describe("hosted database names", () => {
+  it("suggests a clean name from the display name, no forced prefix", () => {
+    expect(suggestDbName("ComicAI")).toBe("comicai");
+    expect(suggestDbName("Đặt lịch 2026")).toBe("dat_lich_2026");
+    expect(suggestDbName("99 problems")).toBe("db_99_problems");
+    expect(suggestDbName("Postgres")).toBe(""); // reserved: people choose
+    expect(suggestDbName("!!!")).toBe("");
+    expect(suggestDbName("x".repeat(60))).toHaveLength(DB_NAME_MAX);
+  });
+  it("explains why a name can't be used", () => {
+    expect(dbNameProblem("comicai")).toBeNull();
+    expect(dbNameProblem("9lives")).toMatch(/Start with a letter/);
+    expect(dbNameProblem("Comic")).toMatch(/Start with a letter|lowercase/);
+    expect(dbNameProblem("comic-ai")).toMatch(/lowercase letters/);
+    for (const n of ["postgres", "template1", "crema", "pg_stats", "crema_provisioner"]) expect(dbNameProblem(n)).toMatch(/reserved/);
   });
 });

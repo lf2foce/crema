@@ -6,6 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import pg from "pg";
 import { randomUUID } from "node:crypto";
 import { Hosting, password } from "../core/hosting";
+import { suggestDbName } from "../lib/dbName";
 
 const ADMIN = process.env.CREMA_TEST_HOSTING_ADMIN_URL ?? "postgresql://localhost:5432/postgres";
 let h: Hosting;
@@ -13,7 +14,7 @@ let h: Hosting;
 const make = (dbName: string) => ({ dbName, token: randomUUID(), ownerPassword: password(), readerPassword: password() });
 let provisioner = "";
 const tag = `t${process.pid}`;
-const A = Hosting.dbNameFor(`ztest ${tag} a`), B = Hosting.dbNameFor(`ztest ${tag} b`);
+const A = suggestDbName(`ztest ${tag} a`), B = suggestDbName(`ztest ${tag} b`);
 const TA = make(A), TB = make(B);
 let available = true;
 
@@ -53,7 +54,7 @@ describe("hosted databases", () => {
 
   it("creates an isolated database an app can use and Crema can only read", async () => {
     if (!available) return;
-    expect(A).toMatch(/^app_ztest_/);
+    expect(A).toMatch(/^ztest_/);
     const a = await h.create(A, TA);
     await h.create(B, TB);
     expect(TA.ownerPassword).toMatch(/^[A-Za-z0-9_-]{32}$/);
@@ -92,6 +93,8 @@ describe("hosted databases", () => {
     await expect(h.resetPassword(A, "owner", TB.token)).rejects.toThrow(/isn’t one Crema created/); // another source's token
     await expect(h.create(`${A}; DROP DATABASE x`, TA)).rejects.toThrow(/Invalid database name/);
     await expect(h.create(A, make(A))).rejects.toThrow(/already exists/); // same name, different source
+    expect(await h.taken(A)).toEqual(expect.arrayContaining([A, `${A}_owner`, `${A}_crema`]));
+    await expect(h.create("postgres", make("postgres"))).rejects.toThrow(/Invalid database name/);
 
     expect(await h.drop(A, TB.token)).toEqual({ dropped: [], left: [A, `${A}_crema`, `${A}_owner`] }); // not B's to drop
     expect((await h.drop(A, TA.token)).dropped).toEqual([A, `${A}_crema`, `${A}_owner`]);
@@ -102,7 +105,7 @@ describe("hosted databases", () => {
 
   it("resumes an interrupted attempt with the same token, and never adopts a stranger's", async () => {
     if (!available) return;
-    const C = Hosting.dbNameFor(`ztest ${tag} c`), TC = make(C);
+    const C = suggestDbName(`ztest ${tag} c`), TC = make(C);
     const admin = new pg.Client({ connectionString: ADMIN }); await admin.connect();
     try {
       // a crash after the roles were made: create the owner role the way an attempt would have
