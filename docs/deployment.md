@@ -220,7 +220,7 @@ joined with `&&` (Dokploy's command field accepts only chained `docker compose` 
 and prefixes the first with `docker`).
 
 Nothing is built on the VPS. To roll back, set `CREMA_IMAGE_TAG=sha-<commit>` in
-Dokploy's environment and redeploy; set it back to `latest` afterwards.
+Dokploy's environment and redeploy; remove it afterwards to follow `latest` again.
 
 Open `https://crema.phenau.com`. The first admin is created from the one-time setup
 link in the `web` service's log (Dokploy → Logs). This is a test instance without HA.
