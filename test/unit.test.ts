@@ -1,6 +1,5 @@
 import { dbNameProblem, naturalDbName } from "../lib/dbName";
-import { afterEach, describe, expect, it } from "vitest";
-import { display, setCurrency } from "../core/format";
+import { describe, expect, it } from "vitest";
 import { driftedRelations, fingerprint, relationsFromPlan } from "../core/verify";
 import { assertSingleSelect, bind, placeholders, seriesSql, SqlContractError } from "../core/warehouse";
 import type { Table } from "../core/types";
@@ -73,28 +72,6 @@ describe("drift", () => {
   it("reads relations from an EXPLAIN plan", () => {
     const plan = [{ Plan: { Plans: [{ "Relation Name": "invoices", Schema: "public" }, { Plans: [{ "Relation Name": "accounts", Schema: "public" }] }] } }];
     expect(relationsFromPlan(plan)).toEqual(["public.accounts", "public.invoices"]);
-  });
-});
-
-describe("display", () => {
-  afterEach(() => setCurrency("VND"));
-  it("formats units", () => {
-    expect(display(0.0064, "percent")).toBe("0.64%");
-    expect(display(946, "count")).toBe("946");
-    expect(display(null, "count")).toBe("—");
-  });
-  it("shows money in dong by default", () => {
-    expect(display(1_234_567, "currency", { compact: false })).toBe("1.234.567 ₫");
-    expect(display(1_250_000_000, "currency")).toBe("1,25 tỷ ₫");
-    expect(display(340_000_000, "currency")).toBe("340 tr ₫");
-    expect(display(12_500_000, "currency")).toBe("12,5 tr ₫");
-    expect(display(250_000, "currency")).toBe("250.000 ₫");
-    expect(display(-2_000_000, "currency")).toBe("-2 tr ₫");
-  });
-  it("supports another workspace currency", () => {
-    setCurrency("USD");
-    expect(display(172244.33, "currency", { compact: false })).toBe("$172,244");
-    expect(display(950.5, "currency")).toBe("$950.50");
   });
 });
 

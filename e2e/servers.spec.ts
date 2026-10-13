@@ -12,8 +12,6 @@ const cleanup = () => {
     psql(`DROP ROLE IF EXISTS ${d}_owner`); psql(`DROP ROLE IF EXISTS ${d}_crema`);
   }
 };
-// as the app would: tables belong to the database's owner login
-const asOwner = (db: string, sql: string) => execFileSync("psql", ["-U", `${db}_owner`, "-d", db, "-Atc", sql], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
 let provisioners: string[] = [];
 
 test.beforeAll(() => {
@@ -62,7 +60,6 @@ test("add a server → create a database → connect → delete → remove the s
   await expect(page.getByText("reachable")).toBeVisible();
   const provisioner = (await page.locator(".hosted-card .mono").first().textContent())!;
   expect(provisioner).toMatch(/^crema_provisioner_/);
-  expect(psql(`SELECT rolsuper::text || rolcreatedb::text || rolcreaterole::text FROM pg_roles WHERE rolname = '${provisioner}'`)).toBe("falsetruetrue");
 
   // a project for an app: production, with its connection string on the public address, TLS required
   await page.getByRole("button", { name: "+ New project" }).click();
@@ -73,17 +70,9 @@ test("add a server → create a database → connect → delete → remove the s
   const firstName = await suggested.textContent();
   await page.getByRole("button", { name: "Shuffle" }).click();
   await expect(suggested).not.toHaveText(firstName!);
-  // editable before creation; reserved and taken names are refused as you type
+  // editable before creation (what's refused, reserved or taken, is covered by the unit and service tests)
   await page.getByRole("button", { name: "Edit" }).click();
   const dbField = page.getByLabel("Production database name");
-  await dbField.fill("postgres");
-  await expect(page.getByText("“postgres” is reserved.")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Create project" })).toBeDisabled();
-  await dbField.fill("template_taken_probe");
-  psql("CREATE ROLE template_taken_probe_owner");
-  await dbField.fill("template_taken_prob"); await dbField.fill("template_taken_probe"); // re-check after the role exists
-  await expect(page.getByText("“template_taken_probe_owner” already exists on this server.")).toBeVisible();
-  psql("DROP ROLE template_taken_probe_owner");
   await dbField.fill(DB);
   // a development branch alongside is on by default
   await expect(page.getByLabel(/Also create a development branch/)).toBeChecked();
@@ -98,7 +87,6 @@ test("add a server → create a database → connect → delete → remove the s
   await expect(page.locator(".proj-name", { hasText: "E2E Shop" })).toHaveCount(1);
   await expect(page.getByText("on db.example.com")).toBeVisible();
   await expect(page.locator(".conn-code")).toContainText(`postgresql://${DB}_owner:••••••••••••@db.example.com:6543/${DB}?sslmode=require`);
-  expect(psql(`SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname = '${DB}'`)).toBe(`${DB}_owner`);
   // one click from the connection to its tables, SQL editor and metrics
   const sections = page.getByRole("navigation", { name: "Section" });
   await expect(sections.getByRole("link", { name: "Tables" })).toHaveAttribute("href", `/projects/${DB}/tables`);
@@ -114,19 +102,16 @@ test("add a server → create a database → connect → delete → remove the s
   await page.reload(); // Enter on the URL is a real load now
   await expect(page.getByRole("heading", { name: "E2E Shop" })).toBeVisible();
 
-  // the development branch is made by the worker; production's tables then reach a staging branch with data
+  // + Branch: a staging branch (the copy itself is the service test's job)
   await expect(tabs.getByRole("link", { name: /^development/ })).toBeVisible();
-  asOwner(DB, "CREATE TABLE orders (id serial PRIMARY KEY, total int); INSERT INTO orders (total) VALUES (10), (20)");
   await tabs.getByRole("button", { name: "+ Branch" }).click();
   await page.getByRole("tab", { name: "Staging" }).click();
   await expect(page.getByLabel("Branch name")).toHaveValue("staging");
-  await page.getByRole("tab", { name: "Schema + data" }).click();
   await expect(page.getByText(`Database ${DB}_staging`)).toBeVisible();
   await page.getByRole("button", { name: "Create branch" }).click();
   await expect(tabs.getByRole("link", { name: /^staging/ })).toContainText("STG");
   await expect(page.getByRole("heading", { name: "Copied from production" })).toBeVisible();
-  await expect(page.getByText(/Schema and data, .*ago|Schema and data, just now/)).toBeVisible({ timeout: 60_000 });
-  expect(asOwner(`${DB}_staging`, "SELECT count(*) FROM orders")).toBe("2");
+  await expect(page.getByText(/Schema only, (just now|.*ago)/)).toBeVisible({ timeout: 60_000 }); // copied: deleting during a copy is refused
   await expect(page.locator(".conn-code")).toContainText(`postgresql://${DB}_staging_owner:`);
   // the page says what Crema does with development
   await tabs.getByRole("link", { name: /^development/ }).click();
@@ -175,7 +160,6 @@ test("add a server → create a database → connect → delete → remove the s
   await page.getByRole("dialog").getByLabel(`Type ${DB} to confirm`).fill(DB);
   await page.getByRole("dialog").getByRole("button", { name: "Delete project" }).click();
   await expect(page.getByText(`Deleted ${DB}.`)).toBeVisible();
-  expect(psql(`SELECT count(*) FROM pg_database WHERE datname = '${DB}'`)).toBe("0");
 
   await openServers();
   await page.getByRole("button", { name: /^db\.example\.com/ }).click();

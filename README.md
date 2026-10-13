@@ -186,7 +186,8 @@ Why, and what was deliberately left out: [PRODUCT.md](PRODUCT.md).
 ```sh
 pnpm test          # unit + integration against the demo database; state in throwaway schemas of crema_test
 pnpm test:db       # also the suites that need a real cluster (hosting, safety, queue); run before deploying
-pnpm test:e2e      # the full loop in a browser, with the real model: connect → discover → certify → API
+pnpm test:ui       # the UI e2e without the model (~15 s): hosting, projects, branches, navigation
+pnpm test:e2e      # everything in a browser, incl. the full loop with the real model (~1 min): connect → discover → certify → API
 ```
 
 ## License
