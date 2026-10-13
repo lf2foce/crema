@@ -66,6 +66,7 @@ services:
     environment:
       <<: *backup
       PGBACKREST_STANZA: state
+      PGBACKREST_PG1_USER: crema # this server's superuser (pgBackRest assumes "postgres")
       PGBACKREST_REPO1_PATH: ${CREMA_BACKUP_PATH:-/crema}/state
       POSTGRES_USER: crema
       POSTGRES_DB: crema
