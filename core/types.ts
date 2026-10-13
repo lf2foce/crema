@@ -164,6 +164,21 @@ export interface Source {
   readOnly: boolean;
   writableTables: number;
   dbName: string | null;
+  /** hosted: the server it lives on */
+  serverId: number | null;
+  createdBy: string;
+  createdAt: string;
+}
+
+/** A Postgres server Creama administers through its own provisioner login, to create databases for apps. */
+export interface Server {
+  id: number;
+  workspaceId: string;
+  name: string;
+  provisioner: string;
+  publicHost: string;
+  ssl: boolean;
+  version: string;
   createdBy: string;
   createdAt: string;
 }

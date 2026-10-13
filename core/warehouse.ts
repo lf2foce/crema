@@ -58,8 +58,8 @@ export function stripSql(sql: string): string {
 }
 
 /** A metric definition is exactly one read query. The READ ONLY transaction is the real guard. */
-export function assertSingleSelect(sql: string): string {
-  return validateSql(sql);
+export function assertSingleSelect(sql: string, mode: "metric" | "editor" = "metric"): string {
+  return validateSql(sql, mode);
 }
 
 export type Params = { start: string; end: string; at: string };

@@ -7,7 +7,7 @@
 import { compare } from "./compare";
 import { ExploreError, runSql, tableRows } from "./explore";
 import { currentCurrency, display, fmt } from "./format";
-import { Hosting, HostingError } from "./hosting";
+import { Hosting, HostingError, type LoginCheck } from "./hosting";
 import { modelConfigured, modelName, modelSettings, thinkingLevel, type Usage } from "./model";
 import { propose, repair } from "./propose";
 import { DEFAULT_WORKSPACE, implId, Registry, registry } from "./registry";
@@ -67,17 +67,22 @@ export class Creama {
   /** Every database in the workspace, with what Creama knows about each. */
   async sources() {
     const list = await this.reg.sources(this.scope.workspaceId);
-    const h = Hosting.fromEnv();
-    const hosted = list.filter((s) => s.kind === "hosted" && s.status === "ready" && s.dbName);
-    const info = h && hosted.length ? await h.info(hosted.map((s) => s.dbName!)).catch(() => null) : null;
+    // size and connections of hosted databases, asked of each server once; null when it can't be reached
+    const byServer = new Map<number, string[]>();
+    for (const s of list) if (s.kind === "hosted" && s.status === "ready" && s.dbName && s.serverId) byServer.set(s.serverId, [...(byServer.get(s.serverId) ?? []), s.dbName]);
+    const info = new Map<number, Awaited<ReturnType<Hosting["info"]>> | null>();
+    await Promise.all([...byServer].map(async ([id, names]) => {
+      info.set(id, await this.hostingFor(id).then((h) => h.info(names)).catch(() => null));
+    }));
     return Promise.all(list.map(async (s) => {
       const [metrics, open] = await Promise.all([this.reg.metrics(s.id), this.reg.concepts(s.id, ["open"])]);
-      const i = s.dbName ? info?.[s.dbName] : undefined;
+      const onServer = s.serverId ? info.get(s.serverId) : undefined;
+      const i = s.dbName ? onServer?.[s.dbName] : undefined;
       return {
         ...s,
         metrics: metrics.length, proposals: open.length, attention: metrics.filter((m) => m.status === "needs_attention").length,
         sizeBytes: i?.sizeBytes ?? null, connections: i?.connections ?? null,
-        missing: s.kind === "hosted" && s.status === "ready" && info !== null && !i, // reconciliation: gone from the cluster
+        missing: s.kind === "hosted" && s.status === "ready" && !!onServer && !i, // reconciliation: gone from its server
       };
     }));
   }
@@ -105,33 +110,107 @@ export class Creama {
     return { source, ...describeUrl(url), tables: info.tables, writableTables: info.writable, readOnlyRole: info.ro === "on" };
   }
 
+  // ---------- servers: Postgres servers Creama creates databases on ----------
+
+  async servers() {
+    const [servers, sources] = await Promise.all([this.reg.servers(this.scope.workspaceId), this.reg.sources(this.scope.workspaceId)]);
+    return servers.map((v) => ({ ...v, databases: sources.filter((s) => s.serverId === v.id).length }));
+  }
+
+  /**
+   * Add a server from an admin login. A superuser login is used once, to create Creama's own
+   * provisioner (CREATEDB CREATEROLE), and isn't stored; a login that already is such a role is kept.
+   */
+  async addServer(input: { url: string; name?: string | null; publicHost?: string | null; ssl?: boolean | null }, actor: string) {
+    const url = input.url.trim();
+    if (!/^postgres(ql)?:\/\//.test(url)) throw new CreamaError("Expected a postgres:// connection string for an admin login.");
+    let check: LoginCheck;
+    try { check = await Hosting.check(url); } catch (e) { throw new CreamaError(`Could not connect: ${pgError(e)}`); }
+    if (!check.superuser && Hosting.refusal(check)) throw new CreamaError(Hosting.refusal(check)!, 422);
+    if (check.superuser && check.versionNum < 160000) throw new CreamaError(Hosting.refusal(check)!, 422);
+    let address;
+    try { address = Hosting.address(url, input.publicHost, input.ssl); } catch (e) { throw hostingError(e); }
+    const name = (input.name ?? "").trim().slice(0, 60) || address.host;
+    if ((await this.reg.servers(this.scope.workspaceId)).some((v) => v.name === name)) throw new CreamaError(`A server named “${name}” already exists.`, 409);
+
+    let adminUrl = url, provisioner = check.user;
+    if (check.superuser) {
+      try { ({ url: adminUrl, role: provisioner } = await Hosting.createProvisioner(url)); } catch (e) { throw hostingError(e); }
+    }
+    try {
+      if (check.superuser) {
+        const again = await Hosting.check(adminUrl); // the new login works and is what we asked for
+        if (Hosting.refusal(again)) throw new HostingError(Hosting.refusal(again)!);
+      }
+      const server = await this.reg.addServer(this.scope.workspaceId, {
+        name, adminUrl: seal(adminUrl), provisioner, publicHost: `${address.host}:${address.port}`, ssl: address.ssl, version: check.version,
+      }, actor);
+      return { server, createdProvisioner: check.superuser ? provisioner : null };
+    } catch (e) {
+      // don't leave a provisioner behind that nothing records
+      if (check.superuser) await Hosting.dropRole(url, provisioner).catch(() => {});
+      throw hostingError(e);
+    }
+  }
+
+  /** Development only: the Postgres server in DATABASE_URL, so hosting works on a laptop in one click. */
+  async addLocalServer(actor: string) {
+    if (!localServerOffered()) throw new CreamaError("Add a server with an admin login instead.", 404);
+    const u = new URL(process.env.DATABASE_URL!);
+    u.pathname = "/postgres";
+    return this.addServer({ url: u.toString(), name: "This machine" }, actor);
+  }
+
+  /** Is the server reachable, and does Creama's login still have what it needs? */
+  async checkServer(id: number) {
+    const server = await this.reg.server(this.scope.workspaceId, id);
+    if (!server) throw new CreamaError("Server not found.", 404);
+    try {
+      const h = await this.hostingFor(id);
+      const c = await Hosting.check(h.adminUrl);
+      return { ok: !Hosting.refusal(c), reason: Hosting.refusal(c), version: c.version };
+    } catch (e) {
+      return { ok: false, reason: e instanceof CreamaError ? e.message : `Can’t reach it: ${pgError(e)}`, version: null };
+    }
+  }
+
+  /** Forget a server once no database is on it. Its provisioner role stays on the server (Creama can't drop itself). */
+  async removeServer(id: number, actor: string) {
+    const server = await this.reg.server(this.scope.workspaceId, id);
+    if (!server) throw new CreamaError("Server not found.", 404);
+    const blocking = await this.reg.removeServer(server, actor);
+    if (blocking) throw new CreamaError(`${server.name} still has ${blocking} database${blocking > 1 ? "s" : ""}. Delete them first.`, 409);
+    return { provisioner: server.provisioner };
+  }
+
+  private async hostingFor(serverId: number | null): Promise<Hosting> {
+    const server = serverId == null ? null : await this.reg.server(this.scope.workspaceId, serverId);
+    if (!server) throw new CreamaError("This database’s server is no longer in the workspace.", 409);
+    const sealed = await this.reg.serverSecret(server.id);
+    let url = "";
+    try { url = sealed ? unseal(sealed) : ""; } catch { /* encryption key changed */ }
+    if (!url) throw new CreamaError(`Creama can’t read its login for ${server.name} (the encryption key may have changed). Add the server again.`, 409);
+    return new Hosting(url, Hosting.address(url, server.publicHost, server.ssl));
+  }
+
   // ---------- hosted databases: Postgres Creama creates for apps elsewhere ----------
-
-  private hosting(): Hosting {
-    const h = Hosting.fromEnv();
-    if (!h) throw new CreamaError("Database hosting needs a Postgres server: set CREAMA_HOSTING_ADMIN_URL.", 409);
-    return h;
-  }
-
-  async hostingStatus() {
-    const h = Hosting.fromEnv();
-    const check = h ? await h.canAdminister() : { ok: false, reason: "No Postgres server configured for hosting." };
-    return { enabled: check.ok, reason: check.ok ? null : check.reason ?? null, shared: h?.shared ?? false, address: h ? `${h.publicAddress.host}:${h.publicAddress.port}` : null, ssl: h?.publicAddress.ssl ?? false };
-  }
 
   /**
    * Creates a database for an app and adds it as a source. The source row comes first (status
    * "provisioning"), so a failure part-way leaves a visible, retryable record instead of orphans.
    */
-  async createHosted(name: string, actor: string) {
-    const h = this.hosting();
+  async createHosted(name: string, actor: string, serverId?: number | null) {
+    const servers = await this.reg.servers(this.scope.workspaceId);
+    const server = serverId ? servers.find((v) => v.id === serverId) : servers.length === 1 ? servers[0] : null;
+    if (!server) throw new CreamaError(servers.length ? "Choose the server to create it on." : "Add a Postgres server first: Creama creates databases on a server you give it.", servers.length ? 400 : 409);
+    const h = await this.hostingFor(server.id);
     if (!name?.trim()) throw new CreamaError("Give the database a name.");
     let dbName: string;
     try { dbName = Hosting.dbNameFor(name); } catch (e) { throw hostingError(e); }
-    if ((await this.reg.sources(this.scope.workspaceId)).some((s) => s.dbName === dbName)) throw new CreamaError(`A database named “${dbName}” already exists.`, 409);
+    if ((await this.reg.sources(this.scope.workspaceId)).some((s) => s.serverId === server.id && s.dbName === dbName)) throw new CreamaError(`A database named “${dbName}” already exists on ${server.name}.`, 409);
     const source = await this.reg.addSource(this.scope.workspaceId, {
       slug: await this.reg.freeSlug(this.scope.workspaceId, dbName.replace(/^app_/, "")), name: name.trim().slice(0, 80),
-      kind: "hosted", status: "provisioning", dbName, readOnly: true,
+      kind: "hosted", status: "provisioning", dbName, readOnly: true, serverId: server.id,
     }, actor);
     await this.provision(h, source, actor);
     return (await this.reg.source(this.scope.workspaceId, source.id))!;
@@ -139,9 +218,9 @@ export class Creama {
 
   /** Run provisioning again for a hosted source that failed. */
   async retryHosted(id: number, actor: string) {
-    const h = this.hosting();
     const source = await this.reg.source(this.scope.workspaceId, id);
     if (!source || source.kind !== "hosted") throw new CreamaError("Hosted database not found.", 404);
+    const h = await this.hostingFor(source.serverId);
     if (source.status !== "failed") throw new CreamaError("Only a database that failed to provision can be retried.", 409);
     await this.provision(h, source, actor);
     return (await this.reg.source(this.scope.workspaceId, id))!;
@@ -170,9 +249,9 @@ export class Creama {
 
   /** Host, user, password… for one of a hosted database's logins. Admin only (enforced by the route). */
   async hostedConnection(id: number, role: "owner" | "reader") {
-    const h = this.hosting();
     const source = await this.reg.source(this.scope.workspaceId, id);
     if (!source || source.kind !== "hosted" || !source.dbName) throw new CreamaError("Hosted database not found.", 404);
+    const h = await this.hostingFor(source.serverId);
     const secrets = await this.reg.sourceSecrets(id);
     const sealed = role === "owner" ? secrets.ownerPassword : secrets.readerPassword;
     let pw = "";
@@ -182,9 +261,9 @@ export class Creama {
   }
 
   async resetHostedPassword(id: number, actor: string, role: "owner" | "reader" = "owner") {
-    const h = this.hosting();
     const source = await this.reg.source(this.scope.workspaceId, id);
     if (!source || source.kind !== "hosted" || !source.dbName) throw new CreamaError("Hosted database not found.", 404);
+    const h = await this.hostingFor(source.serverId);
     const login = `${source.dbName}_${role === "owner" ? "owner" : "creama"}`;
     let pw: string;
     try { pw = await h.resetPassword(login); } catch (e) { throw hostingError(e); }
@@ -203,7 +282,8 @@ export class Creama {
     const source = await this.reg.source(this.scope.workspaceId, id);
     if (!source) throw new CreamaError("Database not found.", 404);
     if (source.kind === "hosted" && source.dbName) {
-      try { await this.hosting().drop(source.dbName); } catch (e) { throw hostingError(e); }
+      const h = await this.hostingFor(source.serverId);
+      try { await h.drop(source.dbName); } catch (e) { throw hostingError(e); }
     }
     await this.reg.removeSource(source, actor);
     tablesCache.delete(source.id);
@@ -213,8 +293,8 @@ export class Creama {
 
   async state() {
     const source = this.scope.source;
-    const [sources, hosting] = await Promise.all([this.sources(), this.hostingStatus()]);
-    const base = { workspace: this.scope.workspaceId, sources, hosting, model: { name: modelName(), configured: modelConfigured() }, currency: currentCurrency() };
+    const [sources, servers] = await Promise.all([this.sources(), this.servers()]);
+    const base = { workspace: this.scope.workspaceId, sources, servers, localServer: localServerOffered() && !servers.length, model: { name: modelName(), configured: modelConfigured() }, currency: currentCurrency() };
     if (!source) return { ...base, source: null, run: null, understanding: null, proposals: [] as Concept[], rejected: [] as Concept[], metrics: [] as Metric[] };
     const [run, understood, proposals, rejected, metrics] = await Promise.all([
       this.reg.latestRun(source.id), this.reg.latestRun(source.id, { withSummary: true }),
@@ -649,6 +729,11 @@ function mergeDef(base: Pick<CandidateSpec, "kind" | "unit" | "sql" | "membersSq
   const sql = (e.sql ?? base.sql).trim();
   const membersSql = e.membersSql === undefined ? base.membersSql : e.membersSql?.trim() || null;
   return { kind: e.kind ?? base.kind, unit: e.unit ?? base.unit, sql, membersSql, memberTable: membersSql ? base.memberTable : null };
+}
+
+/** In development, offer the Postgres server in DATABASE_URL as a hosting server. Never in production. */
+function localServerOffered() {
+  return process.env.NODE_ENV !== "production" && !!process.env.DATABASE_URL;
 }
 
 function hostingError(e: unknown): Error {

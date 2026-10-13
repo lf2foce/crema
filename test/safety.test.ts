@@ -1,22 +1,17 @@
 // Real Postgres checks, opt-in on a disposable cluster. Never reads .env files.
-import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import pg from "pg";
 import { afterAll, describe, expect, it } from "vitest";
-import { migrate } from "../core/db";
-import { Hosting } from "../core/hosting";
 import { Registry } from "../core/registry";
 import { Creama } from "../core/service";
 import { closePools } from "../core/warehouse";
 import { closeDatabases } from "../core/db";
-import { unseal } from "../core/secret";
 
 const url = process.env.CREAMA_SAFETY_TEST_URL;
 const suite = url ? describe : describe.skip;
 const schemas: string[] = [];
 const schema = () => { const s = `safety_${randomUUID().replaceAll("-", "")}`; schemas.push(s); return s; };
 const admin = new pg.Pool({ connectionString: url, max: 2 });
-const hosting = new Hosting(url ?? "postgresql://localhost/postgres", { host: "127.0.0.1", port: 55483, ssl: false });
 
 afterAll(async () => {
   if (url) for (const s of schemas) await admin.query(`DROP SCHEMA IF EXISTS ${s} CASCADE`);
@@ -27,18 +22,63 @@ suite("step 1 safety regressions", () => {
   it("does not delete an existing database when provisioning or retry collides", async () => {
     const name = `app_safety_${randomUUID().replaceAll("-", "").slice(0, 12)}`;
     await admin.query(`CREATE DATABASE ${name}`);
-    const previous = process.env.CREAMA_HOSTING_ADMIN_URL;
-    process.env.CREAMA_HOSTING_ADMIN_URL = url;
+    const svc = new Creama(new Registry(url, { schema: schema() }));
+    const { createdProvisioner } = await svc.addServer({ url: url! }, "test");
     try {
-      const svc = new Creama(new Registry(url, { schema: schema() }));
       await expect(svc.createHosted(name.replace(/^app_/, ""), "test")).rejects.toThrow(/already exists/);
       const failed = (await svc.reg.sources("default"))[0];
       expect(failed.status).toBe("failed");
       await expect(svc.retryHosted(failed.id, "test")).rejects.toThrow(/already exists/);
       expect((await admin.query("SELECT 1 FROM pg_database WHERE datname = $1", [name])).rowCount).toBe(1);
     } finally {
-      if (previous === undefined) delete process.env.CREAMA_HOSTING_ADMIN_URL; else process.env.CREAMA_HOSTING_ADMIN_URL = previous;
       await admin.query(`DROP DATABASE ${name} WITH (FORCE)`);
+      await admin.query(`DROP ROLE IF EXISTS ${createdProvisioner}`);
+    }
+  });
+
+  it("hosts through its own limited login: full lifecycle, and nothing else on the server", async () => {
+    const svc = new Creama(new Registry(url, { schema: schema() }));
+    await expect(svc.createHosted("nowhere", "test")).rejects.toThrow(/Add a Postgres server first/);
+    const { server, createdProvisioner } = await svc.addServer({ url: url!, name: "Local", publicHost: "db.example.com:6543" }, "test");
+    expect(createdProvisioner).toMatch(/^creama_provisioner_[0-9a-f]{6}$/);
+    expect(server).toMatchObject({ name: "Local", publicHost: "db.example.com:6543", ssl: true, provisioner: createdProvisioner });
+    // the superuser URL is not what Creama keeps
+    const stored = (await svc.reg.db.pool.query("SELECT admin_url FROM servers WHERE id = $1", [server.id])).rows[0].admin_url;
+    expect(stored).not.toContain(new URL(url!).username || "@@");
+    const role = (await admin.query("SELECT rolsuper, rolcreatedb, rolcreaterole, rolbypassrls FROM pg_roles WHERE rolname = $1", [createdProvisioner])).rows[0];
+    expect(role).toEqual({ rolsuper: false, rolcreatedb: true, rolcreaterole: true, rolbypassrls: false });
+
+    const stranger = `stranger_${randomUUID().replaceAll("-", "").slice(0, 8)}`;
+    await admin.query(`CREATE ROLE ${stranger} LOGIN`);
+    const dbName = `app_life_${randomUUID().replaceAll("-", "").slice(0, 8)}`;
+    try {
+      const source = await svc.createHosted(dbName.replace(/^app_/, ""), "test");
+      expect(source).toMatchObject({ status: "ready", serverId: server.id, dbName });
+      const conn = await svc.hostedConnection(source.id, "owner");
+      expect(conn).toMatchObject({ host: "db.example.com", port: 6543, ssl: true, user: `${dbName}_owner` });
+      expect((await svc.resetHostedPassword(source.id, "test", "reader")).password).not.toBe(conn.password);
+      expect((await svc.sources())[0].sizeBytes).toBeGreaterThan(0);
+      await expect(svc.removeServer(server.id, "test")).rejects.toThrow(/still has 1 database/);
+
+      // the provisioner can't reach past what it created
+      expect(await svc.checkServer(server.id)).toMatchObject({ ok: true });
+      const prov = new URL(url!); prov.username = createdProvisioner!; prov.password = "";
+      const p = new pg.Client({ connectionString: prov.toString() });
+      await p.connect();
+      try {
+        await expect(p.query(`ALTER ROLE ${stranger} PASSWORD 'x'`)).rejects.toThrow(/permission denied/);
+        await expect(p.query(`DROP ROLE ${stranger}`)).rejects.toThrow(/permission denied/);
+        await expect(p.query("CREATE ROLE sneaky SUPERUSER")).rejects.toThrow(/permission denied/);
+      } finally { await p.end(); }
+
+      await svc.removeSource(source.id, "test");
+      expect((await admin.query("SELECT 1 FROM pg_database WHERE datname = $1", [dbName])).rowCount).toBe(0);
+      expect(await svc.removeServer(server.id, "test")).toEqual({ provisioner: createdProvisioner });
+      expect(await svc.servers()).toEqual([]);
+    } finally {
+      await admin.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
+      await admin.query(`DROP ROLE IF EXISTS ${dbName}_owner`); await admin.query(`DROP ROLE IF EXISTS ${dbName}_creama`);
+      await admin.query(`DROP ROLE IF EXISTS ${stranger}`); await admin.query(`DROP ROLE IF EXISTS ${createdProvisioner}`);
     }
   });
 
@@ -59,34 +99,5 @@ suite("step 1 safety regressions", () => {
     expect((await svc.reg.metric(source.id, "orders"))!.status).toBe("needs_attention");
     expect(await base.checkDrift()).toMatchObject({ changed: 0 });
     expect((await base.audit()).filter((event) => event.action === "metric.drift_detected")).toHaveLength(1);
-  });
-
-  it("upgrades the released schema in place, preserves history and seals its source", async () => {
-    const s = schema();
-    await admin.query(`CREATE SCHEMA ${s}`);
-    const pool = new pg.Pool({ connectionString: url, options: `-c search_path=${s}` });
-    const old = execFileSync("git", ["show", "67caf45:core/db.ts"], { encoding: "utf8" });
-    const legacy = [...old.matchAll(/id: "([^"]+)",\s*sql: `([\s\S]*?)`/g)];
-    try {
-      await pool.query("CREATE TABLE creama_migrations (id text PRIMARY KEY, applied_at timestamptz DEFAULT now())");
-      for (const [, id, sql] of legacy) {
-        await pool.query(sql); await pool.query("INSERT INTO creama_migrations(id) VALUES ($1)", [id]);
-      }
-      await pool.query("INSERT INTO settings VALUES ('database_url', $1)", [url]);
-      await pool.query(`INSERT INTO metrics VALUES ('orders','Orders','certified','Ana',1,now());
-        INSERT INTO metric_versions VALUES ('orders',1,'{"metricKey":"orders","version":1}', 'Ana',now());
-        INSERT INTO events (actor, action, subject) VALUES ('Ana','metric.certified','metric:orders');
-        INSERT INTO hosted_databases(name, db_name, created_by) VALUES ('Old app','app_old','Ana')`);
-      const body = (await pool.query("SELECT body FROM metric_versions")).rows[0].body;
-      expect(await migrate(pool)).toEqual(["001_init", "002_jobs"]);
-      expect(await migrate(pool)).toEqual([]);
-      expect((await pool.query("SELECT body FROM metric_versions")).rows[0].body).toEqual(body);
-      const row = (await pool.query("SELECT connection FROM sources WHERE slug = 'legacy'")).rows[0];
-      expect(row.connection).not.toBe(url); expect(unseal(row.connection)).toBe(url);
-      expect((await pool.query("SELECT count(*)::int n FROM events")).rows[0].n).toBe(1);
-      expect((await pool.query("SELECT status FROM sources WHERE kind = 'hosted'")).rows[0].status).toBe("failed");
-      await expect(pool.query("UPDATE metric_versions SET body = '{}'" )).rejects.toThrow(/immutable/);
-      await expect(pool.query("DELETE FROM events")).rejects.toThrow(/append-only/);
-    } finally { await pool.end(); }
   });
 });

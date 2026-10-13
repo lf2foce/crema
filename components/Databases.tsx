@@ -1,6 +1,6 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
-import { ago, api, sourceHref, type AppState, type SourceInfo } from "@/lib/client";
+import { ago, api, sourceHref, type AppState, type ServerInfo, type SourceInfo } from "@/lib/client";
 import { Copy, Modal } from "./ui";
 
 type Conn = { host: string; port: number; database: string; user: string; password: string; ssl: boolean; connectionString: string };
@@ -20,21 +20,28 @@ const FORMATS: { id: string; label: string; render: (url: string) => string }[] 
 
 /**
  * Every database in the workspace, Neon-style: the ones you connected and the ones Creama created
- * for your apps. Pick one to see how to connect, open it in Creama, or manage it.
+ * for your apps, plus the Postgres servers it creates them on. Pick one to see how to connect,
+ * open it in Creama, or manage it.
  */
-export function Databases({ state, selected, notify, reload }: { state: AppState; selected: number | null; notify: (t: string, e?: boolean) => void; reload: () => void }) {
+export function Databases({ state, selected, server, notify, reload }: { state: AppState; selected: number | null; server: number | null; notify: (t: string, e?: boolean) => void; reload: () => void }) {
   const [creating, setCreating] = useState(false);
+  const [adding, setAdding] = useState(false);
   const admin = state.me?.role === "admin";
   const list = state.sources;
-  const db = list.find((d) => d.id === selected) ?? list[0] ?? null;
+  const servers = state.servers;
+  const srv = server ? servers.find((v) => v.id === server) ?? null : null;
+  const db = srv ? null : list.find((d) => d.id === selected) ?? list[0] ?? null;
   const go = (id: number) => { window.location.hash = `databases/${id}`; };
+  const goServer = (id: number) => { window.location.hash = `databases/server-${id}`; };
   const changed = async (id?: number) => { await reload(); if (id) go(id); else window.location.hash = "databases"; };
+  // "Create a new one" needs a server: without one, adding a server comes first
+  const create = () => (servers.length ? setCreating(true) : setAdding(true));
 
   return (
     <div className="hostedpage">
       <aside className="sql-side">
         {admin && <div className="row gap-2">
-          {state.hosting.enabled && <button className="btn primary sm grow" onClick={() => setCreating(true)}>+ New database</button>}
+          <button className="btn primary sm grow" onClick={create}>+ New database</button>
           <a className="btn sm grow" href="/#connect">Connect existing</a>
         </div>}
         <h4>{list.length} database{list.length === 1 ? "" : "s"}</h4>
@@ -48,35 +55,47 @@ export function Databases({ state, selected, notify, reload }: { state: AppState
             </li>
           ))}
         </ul>
-        {state.hosting.enabled && <p className="use-note hosted-where">Hosted databases: apps connect to <span className="mono">{state.hosting.address}</span>{state.hosting.ssl ? " over TLS" : ""}.</p>}
+        {admin && <>
+          <div className="row side-head"><h4 className="grow">{servers.length} server{servers.length === 1 ? "" : "s"}</h4><button className="btn ghost sm" onClick={() => setAdding(true)}>+ Add</button></div>
+          <ul className="sql-list">
+            {servers.map((v) => (
+              <li key={v.id} className={`saved ${v.id === srv?.id ? "on" : ""}`}>
+                <button className="sql-item" onClick={() => goServer(v.id)}>
+                  <span className="ellipsis">{v.name}</span>
+                  <span className="faint mono">{v.publicHost} · {v.databases} db{v.databases === 1 ? "" : "s"}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </>}
       </aside>
 
       <main className="hosted-main">
-        {state.hosting.enabled && state.hosting.shared && (
-          <div className="hosted-banner">Hosted databases are created on the Postgres server that holds Creama’s own data. Fine for development; in production set <span className="mono">CREAMA_HOSTING_ADMIN_URL</span> to a separate cluster.</div>
-        )}
-        {db ? <Detail key={db.id} db={db} admin={admin} notify={notify} onChanged={changed} /> : (
+        {srv ? <ServerDetail key={srv.id} server={srv} notify={notify} onChanged={() => changed()} />
+          : db ? <Detail key={db.id} db={db} server={servers.find((v) => v.id === db.serverId) ?? null} admin={admin} notify={notify} onChanged={changed} /> : (
           <div className="hosted-empty">
             <h1 className="title">Your databases</h1>
             <p className="meaning">Connect a database you already have, or create a new one for an app — and let Creama find and certify its metrics.</p>
-            <div className="row gap-3"><a className="btn primary lg" href="/#connect">Connect a database</a>{state.hosting.enabled && admin && <button className="btn lg" onClick={() => setCreating(true)}>Create a new one</button>}</div>
+            <div className="row gap-3"><a className="btn primary lg" href="/#connect">Connect a database</a>{admin && <button className="btn lg" onClick={create}>Create a new one</button>}</div>
           </div>
         )}
       </main>
 
-      {creating && <NewDatabase notify={notify} onClose={() => setCreating(false)} onCreated={(id) => { setCreating(false); changed(id); }} />}
+      {creating && <NewDatabase servers={servers} notify={notify} onClose={() => setCreating(false)} onCreated={(id) => { setCreating(false); changed(id); }} />}
+      {adding && <AddServer local={state.localServer} notify={notify} onClose={() => setAdding(false)} onAdded={async (id) => { setAdding(false); await reload(); goServer(id); }} />}
     </div>
   );
 }
 
-function NewDatabase({ notify, onClose, onCreated }: { notify: (t: string, e?: boolean) => void; onClose: () => void; onCreated: (id: number) => void }) {
+function NewDatabase({ servers, notify, onClose, onCreated }: { servers: ServerInfo[]; notify: (t: string, e?: boolean) => void; onClose: () => void; onCreated: (id: number) => void }) {
   const [name, setName] = useState("");
+  const [serverId, setServerId] = useState(servers[0]?.id ?? 0);
   const [busy, setBusy] = useState(false);
   const slug = name.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/đ/g, "d").replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 30);
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setBusy(true);
-    try { const r = await api<{ source: { id: number; dbName: string } }>("/api/sources", { body: { kind: "hosted", name }, source: null }); notify(`${r.source.dbName} is ready.`); onCreated(r.source.id); }
+    try { const r = await api<{ source: { id: number; dbName: string } }>("/api/sources", { body: { kind: "hosted", name, serverId }, source: null }); notify(`${r.source.dbName} is ready.`); onCreated(r.source.id); }
     catch (err) { notify((err as Error).message, true); setBusy(false); }
   };
   return (
@@ -84,6 +103,9 @@ function NewDatabase({ notify, onClose, onCreated }: { notify: (t: string, e?: b
       <form className="stack" onSubmit={submit}>
         <h2 className="schema-h m-0">New database</h2>
         <label className="field">Name<input className="input" autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="Booking app" maxLength={60} required /></label>
+        {servers.length > 1 && <label className="field">Server<select className="select" value={serverId} onChange={(e) => setServerId(Number(e.target.value))}>
+          {servers.map((v) => <option key={v.id} value={v.id}>{v.name} · {v.publicHost}</option>)}
+        </select></label>}
         <p className="use-note m-0">Database <span className="mono">{slug ? `app_${slug}` : "app_…"}</span>, login <span className="mono">{slug ? `app_${slug}_owner` : "…_owner"}</span> for your app, and a read-only login for Creama.</p>
         <div className="row"><span className="grow" /><button type="button" className="btn" onClick={onClose}>Cancel</button><button className="btn primary" disabled={busy || !slug}>{busy ? <span className="spin" /> : "Create"}</button></div>
       </form>
@@ -91,7 +113,84 @@ function NewDatabase({ notify, onClose, onCreated }: { notify: (t: string, e?: b
   );
 }
 
-function Detail({ db, admin, notify, onChanged }: { db: SourceInfo; admin: boolean; notify: (t: string, e?: boolean) => void; onChanged: (id?: number) => void }) {
+/** Add a Postgres server: an admin login, and the address apps will use. */
+function AddServer({ local, notify, onClose, onAdded }: { local: boolean; notify: (t: string, e?: boolean) => void; onClose: () => void; onAdded: (id: number) => void }) {
+  const [url, setUrl] = useState("");
+  const [name, setName] = useState("");
+  const [publicHost, setPublicHost] = useState("");
+  const [ssl, setSsl] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const done = (r: { server: { id: number; name: string }; createdProvisioner: string | null }) => {
+    notify(r.createdProvisioner ? `${r.server.name} added. Creama created its own login ${r.createdProvisioner}; the superuser password wasn’t kept.` : `${r.server.name} added.`);
+    onAdded(r.server.id);
+  };
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    try { done(await api("/api/servers", { body: { url, name, publicHost, ssl }, source: null })); }
+    catch (err) { notify((err as Error).message, true); setBusy(false); }
+  };
+  const useLocal = async () => {
+    setBusy(true);
+    try { done(await api("/api/servers", { body: { local: true }, source: null })); }
+    catch (err) { notify((err as Error).message, true); setBusy(false); }
+  };
+  return (
+    <Modal onClose={onClose}>
+      <form className="stack" onSubmit={submit}>
+        <h2 className="schema-h m-0">Add a Postgres server</h2>
+        <p className="use-note m-0">Creama creates databases for your apps here. Use a server of its own, not the one that holds Creama’s data. PostgreSQL 16 or newer.</p>
+        {local && <div className="callout small row"><span className="grow">Developing locally? Use the Postgres server on this machine.</span><button type="button" className="btn sm" disabled={busy} onClick={useLocal}>Use this machine</button></div>}
+        <label className="field">Admin connection string<input className="input mono" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="postgresql://postgres:…@db.example.com:5432/postgres" required /></label>
+        <p className="use-note m-0">A superuser is used once, to create Creama’s own login with only CREATEDB and CREATEROLE; its password isn’t kept. Or give such a login yourself.</p>
+        <div className="row gap-3">
+          <label className="field grow">Address apps use<input className="input mono" value={publicHost} onChange={(e) => setPublicHost(e.target.value)} placeholder="same as above" /></label>
+          <label className="field grow">Name<input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="the host" maxLength={60} /></label>
+        </div>
+        <label className="row gap-2 small"><input type="checkbox" checked={ssl} onChange={(e) => setSsl(e.target.checked)} /> Apps must connect over TLS (sslmode=require)</label>
+        <div className="row"><span className="grow" /><button type="button" className="btn" onClick={onClose}>Cancel</button><button className="btn primary" disabled={busy || !url.trim()}>{busy ? <span className="spin" /> : "Add server"}</button></div>
+      </form>
+    </Modal>
+  );
+}
+
+function ServerDetail({ server, notify, onChanged }: { server: ServerInfo; notify: (t: string, e?: boolean) => void; onChanged: () => void }) {
+  const [check, setCheck] = useState<{ ok: boolean; reason: string | null; version: string | null } | null>(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { api(`/api/servers/${server.id}/check`, { source: null }).then(setCheck).catch((e) => setCheck({ ok: false, reason: (e as Error).message, version: null })); }, [server.id]);
+  const remove = async () => {
+    if (!window.confirm(`Remove ${server.name} from Creama? Only possible once it holds no databases. Nothing on the server is deleted.`)) return;
+    setBusy(true);
+    try {
+      const r = await api<{ provisioner: string }>(`/api/servers/${server.id}/delete`, { body: {}, source: null });
+      notify(`Removed ${server.name}. Its login ${r.provisioner} is still on the server; drop it there if you no longer need it.`);
+      onChanged();
+    } catch (e) { notify((e as Error).message, true); setBusy(false); }
+  };
+  return (
+    <div className="hosted-detail">
+      <div className="eyebrow">Postgres server</div>
+      <h1 className="title">{server.name}</h1>
+      {check && !check.ok && <div className="callout warn small">{check.reason}</div>}
+      <div className="hosted-stats">
+        <div><span>Apps connect to</span><b className="mono">{server.publicHost}</b><small>{server.ssl ? "TLS required" : "TLS optional"}</small></div>
+        <div><span>PostgreSQL</span><b>{check?.version ?? server.version}</b><small>{!check ? "checking…" : check.ok ? "reachable" : "needs attention"}</small></div>
+        <div><span>Databases</span><b>{server.databases}</b></div>
+        <div><span>Added</span><b>{ago(server.createdAt)}</b><small>by {server.createdBy}</small></div>
+      </div>
+      <section className="hosted-card">
+        <div className="hosted-card-head"><h2>Creama’s login</h2></div>
+        <p className="m-0 muted">Creama manages this server as <span className="mono">{server.provisioner}</span>: it can create databases and roles, and change only the ones it created. It isn’t a superuser and can’t touch other databases here.</p>
+      </section>
+      <section className="hosted-card danger">
+        <div className="hosted-card-head"><h2>Danger zone</h2></div>
+        <div className="row"><div className="grow"><b>Remove server</b><div className="small muted">Forgets the server. Delete its databases first; nothing on the server itself is deleted.</div></div><button className="btn text-fail" disabled={busy || server.databases > 0} onClick={remove}>Remove</button></div>
+      </section>
+    </div>
+  );
+}
+
+function Detail({ db, server, admin, notify, onChanged }: { db: SourceInfo; server: ServerInfo | null; admin: boolean; notify: (t: string, e?: boolean) => void; onChanged: (id?: number) => void }) {
   const [role, setRole] = useState<Role>("owner");
   const [format, setFormat] = useState("url");
   const [reveal, setReveal] = useState(false);
@@ -157,12 +256,12 @@ function Detail({ db, admin, notify, onChanged }: { db: SourceInfo; admin: boole
       {db.status === "provisioning" && <div className="callout small">Being created…</div>}
       {db.status === "failed" && <div className="callout warn small row"><span className="grow">Creating it failed: {db.error}</span>{admin && <button className="btn sm" disabled={busy === "retry"} onClick={retry}>Retry</button>}</div>}
       <div className="hosted-stats">
-        <div><span>Database</span><b className="mono">{db.dbName}</b></div>
+        <div><span>Database</span><b className="mono">{db.dbName}</b><small>on {server?.name ?? "a removed server"}</small></div>
         <div><span>Size</span><b>{size(db.sizeBytes)}</b></div>
         <div><span>Connections</span><b>{db.connections ?? "—"}</b></div>
         <div><span>Created</span><b>{ago(db.createdAt)}</b><small>by {db.createdBy}</small></div>
       </div>
-      {db.missing && <div className="callout warn small">This database no longer exists on the hosting server.</div>}
+      {db.missing && <div className="callout warn small">This database no longer exists on {server?.name ?? "its server"}.</div>}
 
       {ready && admin && <section className="hosted-card">
         <div className="hosted-card-head">

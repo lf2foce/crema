@@ -4,7 +4,7 @@ import type pg from "pg";
 import { database, type Db } from "./db";
 import type {
   AuditEvent, Candidate, CandidateSpec, Comparison, Concept, ConceptSpec, EntityReading,
-  Metric, MetricStatus, MetricVersion, Run, RunStep, SavedQuery, Source, Verification,
+  Metric, MetricStatus, MetricVersion, Run, RunStep, SavedQuery, Server, Source, Verification,
 } from "./types";
 
 type Q = Pick<pg.PoolClient, "query">;
@@ -76,7 +76,7 @@ export class Registry {
   private toSource(r: any): Source {
     return {
       id: r.id, workspaceId: r.workspace_id, slug: r.slug, name: r.name, kind: r.kind, status: r.status, error: r.error,
-      readOnly: r.read_only, writableTables: r.writable_tables, dbName: r.db_name, createdBy: r.created_by, createdAt: iso(r.created_at),
+      readOnly: r.read_only, writableTables: r.writable_tables, dbName: r.db_name, serverId: r.server_id ?? null, createdBy: r.created_by, createdAt: iso(r.created_at),
     };
   }
   async sources(workspaceId: string): Promise<Source[]> {
@@ -98,13 +98,13 @@ export class Registry {
     while (taken.has(slug)) slug = `${base}_${++n}`;
     return slug;
   }
-  async addSource(workspaceId: string, s: { slug: string; name: string; kind: Source["kind"]; status?: Source["status"]; connection?: string | null; readOnly?: boolean; writableTables?: number; dbName?: string | null }, actor: string): Promise<Source> {
+  async addSource(workspaceId: string, s: { slug: string; name: string; kind: Source["kind"]; status?: Source["status"]; connection?: string | null; readOnly?: boolean; writableTables?: number; dbName?: string | null; serverId?: number | null }, actor: string): Promise<Source> {
     return this.tx(async (c) => {
       const r = (await c.query(
-        `INSERT INTO sources (workspace_id, slug, name, kind, status, connection, read_only, writable_tables, db_name, created_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
-        [workspaceId, s.slug, s.name, s.kind, s.status ?? "ready", s.connection ?? null, s.readOnly ?? false, s.writableTables ?? 0, s.dbName ?? null, actor])).rows[0];
-      await this.event({ workspaceId, sourceId: r.id }, actor, `source.${s.kind === "hosted" ? "provisioning" : "connected"}`, `source:${r.slug}`, { name: s.name, dbName: s.dbName ?? null }, c);
+        `INSERT INTO sources (workspace_id, slug, name, kind, status, connection, read_only, writable_tables, db_name, server_id, created_by)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *`,
+        [workspaceId, s.slug, s.name, s.kind, s.status ?? "ready", s.connection ?? null, s.readOnly ?? false, s.writableTables ?? 0, s.dbName ?? null, s.serverId ?? null, actor])).rows[0];
+      await this.event({ workspaceId, sourceId: r.id }, actor, `source.${s.kind === "hosted" ? "provisioning" : "connected"}`, `source:${r.slug}`, { name: s.name, dbName: s.dbName ?? null, serverId: s.serverId ?? null }, c);
       return this.toSource(r);
     });
   }
@@ -119,6 +119,43 @@ export class Registry {
     await this.tx(async (c) => {
       await c.query("UPDATE sources SET deleted_at = now(), slug = slug || '#' || id, db_name = CASE WHEN db_name IS NULL THEN NULL ELSE db_name || '#' || id END WHERE id = $1", [source.id]);
       await this.event({ workspaceId: source.workspaceId, sourceId: source.id }, actor, "source.removed", `source:${source.slug}`, { name: source.name, kind: source.kind }, c);
+    });
+  }
+
+  // ---------- servers (Postgres servers Creama creates databases on) ----------
+  private toServer(r: any): Server {
+    return { id: r.id, workspaceId: r.workspace_id, name: r.name, provisioner: r.provisioner, publicHost: r.public_host, ssl: r.ssl, version: r.version, createdBy: r.created_by, createdAt: iso(r.created_at) };
+  }
+  async servers(workspaceId: string): Promise<Server[]> {
+    return (await this.q("SELECT * FROM servers WHERE workspace_id = $1 AND deleted_at IS NULL ORDER BY id", [workspaceId])).map((r) => this.toServer(r));
+  }
+  async server(workspaceId: string, id: number): Promise<Server | null> {
+    const r = (await this.q("SELECT * FROM servers WHERE workspace_id = $1 AND id = $2 AND deleted_at IS NULL", [workspaceId, id]))[0];
+    return r ? this.toServer(r) : null;
+  }
+  /** The sealed provisioner URL; never part of `Server`. */
+  async serverSecret(id: number): Promise<string | null> {
+    return (await this.q<{ admin_url: string }>("SELECT admin_url FROM servers WHERE id = $1", [id]))[0]?.admin_url ?? null;
+  }
+  async addServer(workspaceId: string, s: { name: string; adminUrl: string; provisioner: string; publicHost: string; ssl: boolean; version: string }, actor: string): Promise<Server> {
+    return this.tx(async (c) => {
+      const r = (await c.query(
+        `INSERT INTO servers (workspace_id, name, admin_url, provisioner, public_host, ssl, version, created_by)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+        [workspaceId, s.name, s.adminUrl, s.provisioner, s.publicHost, s.ssl, s.version, actor])).rows[0];
+      await this.event({ workspaceId }, actor, "server.added", `server:${r.id}`, { name: s.name, publicHost: s.publicHost, provisioner: s.provisioner }, c);
+      return this.toServer(r);
+    });
+  }
+  /** Soft delete, only once no database is on it (checked under a row lock). Returns how many block it. */
+  async removeServer(server: Server, actor: string): Promise<number> {
+    return this.tx(async (c) => {
+      await c.query("SELECT id FROM servers WHERE id = $1 FOR UPDATE", [server.id]);
+      const live = (await c.query("SELECT count(*)::int AS n FROM sources WHERE server_id = $1 AND deleted_at IS NULL", [server.id])).rows[0].n;
+      if (live) return live as number;
+      await c.query("UPDATE servers SET deleted_at = now(), name = name || '#' || id WHERE id = $1", [server.id]);
+      await this.event({ workspaceId: server.workspaceId }, actor, "server.removed", `server:${server.id}`, { name: server.name }, c);
+      return 0;
     });
   }
 

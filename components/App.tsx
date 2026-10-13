@@ -14,7 +14,7 @@ import { People } from "./People";
 import { Databases } from "./Databases";
 import { authClient } from "@/lib/authClient";
 
-export type Sel = { type: "list" } | { type: "business" } | { type: "new" } | { type: "schema" } | { type: "sql" } | { type: "people" } | { type: "databases"; id: number | null } | { type: "connect" } | { type: "tables"; table: string | null } | { type: "proposal"; id: number } | { type: "metric"; key: string };
+export type Sel = { type: "list" } | { type: "business" } | { type: "new" } | { type: "schema" } | { type: "sql" } | { type: "people" } | { type: "databases"; id: number | null; server?: number } | { type: "connect" } | { type: "tables"; table: string | null } | { type: "proposal"; id: number } | { type: "metric"; key: string };
 
 function readHash(): Sel {
   if (typeof window === "undefined") return { type: "list" };
@@ -31,12 +31,13 @@ function readHash(): Sel {
   if (t === "p" && v) return { type: "proposal", id: Number(v) };
   if (t === "m" && v) return { type: "metric", key: decodeURIComponent(v) };
   if (t === "tables" && v) return { type: "tables", table: decodeURIComponent(v) };
+  if (t === "databases" && v?.startsWith("server-")) return { type: "databases", id: null, server: Number(v.slice(7)) };
   if (t === "databases" && v) return { type: "databases", id: Number(v) };
   return { type: "list" };
 }
 
 export function hashOf(s: Sel) {
-  return s.type === "list" ? "#" : s.type === "business" ? "#business" : s.type === "new" ? "#new" : s.type === "schema" ? "#schema" : s.type === "sql" ? "#sql" : s.type === "people" ? "#people" : s.type === "databases" ? (s.id ? `#databases/${s.id}` : "#databases") : s.type === "connect" ? "#connect" : s.type === "tables" ? (s.table ? `#tables/${encodeURIComponent(s.table)}` : "#tables") : s.type === "proposal" ? `#p/${s.id}` : `#m/${encodeURIComponent(s.key)}`;
+  return s.type === "list" ? "#" : s.type === "business" ? "#business" : s.type === "new" ? "#new" : s.type === "schema" ? "#schema" : s.type === "sql" ? "#sql" : s.type === "people" ? "#people" : s.type === "databases" ? (s.server ? `#databases/server-${s.server}` : s.id ? `#databases/${s.id}` : "#databases") : s.type === "connect" ? "#connect" : s.type === "tables" ? (s.table ? `#tables/${encodeURIComponent(s.table)}` : "#tables") : s.type === "proposal" ? `#p/${s.id}` : `#m/${encodeURIComponent(s.key)}`;
 }
 
 /** Workspace pages live at / (#databases, #people, #connect); one database's pages at /s/<slug>. */
@@ -93,7 +94,7 @@ export function App({ sourceSlug }: { sourceSlug: string | null }) {
   if (!sourceSlug) {
     const ready = state.sources.filter((x) => x.status === "ready");
     if (sel.type === "people" && state.me) return <Shell state={state} sel={sel}><People me={state.me} notify={notify} />{toastEl}</Shell>;
-    if (sel.type === "databases") return <Shell state={state} sel={sel}><Databases state={state} selected={sel.id} notify={notify} reload={reload} />{toastEl}</Shell>;
+    if (sel.type === "databases") return <Shell state={state} sel={sel}><Databases state={state} selected={sel.id} server={sel.server ?? null} notify={notify} reload={reload} />{toastEl}</Shell>;
     if (sel.type === "connect" || !ready.length) return <Shell state={state} sel={sel}><Connect state={state} notify={notify} />{toastEl}</Shell>;
     // the workspace home is its first database
     if (typeof window !== "undefined") window.location.replace(sourceHref(ready[0].slug));
@@ -268,7 +269,7 @@ function Connect({ state, notify }: { state: AppState; notify: (t: string, e?: b
           )}
         </div>
       </form>
-      {state.hosting.enabled && <p className="connect-alt">No database yet? <a href="/#databases">Create one</a> for your app; Creama can analyse it too.</p>}
+      {(state.servers.length > 0 || state.localServer) && <p className="connect-alt">No database yet? <a href="/#databases">Create one</a> for your app; Creama can analyse it too.</p>}
       <div className="trust-row">
         <span>Never writes to your database</span>
         <span title={`Model: ${state.model.name}`}>No rows sent to the AI</span>

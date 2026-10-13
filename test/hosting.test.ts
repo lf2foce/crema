@@ -1,4 +1,5 @@
-// Hosted databases against the local cluster. Needs a role that may CREATE DATABASE/ROLE
+// Hosted databases against the local cluster, the way production runs them: through a provisioner
+// (CREATEDB CREATEROLE, not a superuser) that a superuser login creates once
 // (CREAMA_TEST_HOSTING_ADMIN_URL, default: the local superuser). Local pg_hba is usually `trust`,
 // so this checks privileges and isolation; password checks only bite where scram is enforced.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -6,7 +7,8 @@ import pg from "pg";
 import { Hosting } from "../core/hosting";
 
 const ADMIN = process.env.CREAMA_TEST_HOSTING_ADMIN_URL ?? "postgresql://localhost:5432/postgres";
-const h = new Hosting(ADMIN, { host: "db.example.com", port: 5432, ssl: true });
+let h: Hosting;
+let provisioner = "";
 const tag = `t${process.pid}`;
 const A = Hosting.dbNameFor(`ztest ${tag} a`), B = Hosting.dbNameFor(`ztest ${tag} b`);
 let available = true;
@@ -19,11 +21,32 @@ const as = async <T>(role: string, db: string, fn: (c: pg.Client) => Promise<T>)
 };
 
 beforeAll(async () => {
-  try { const c = new pg.Client({ connectionString: ADMIN }); await c.connect(); await c.end(); } catch { available = false; }
+  try { const c = new pg.Client({ connectionString: ADMIN }); await c.connect(); await c.end(); } catch { available = false; return; }
+  const p = await Hosting.createProvisioner(ADMIN);
+  provisioner = p.role;
+  h = new Hosting(p.url, Hosting.address(p.url, "db.example.com:5432", true));
 });
-afterAll(async () => { if (available) for (const d of [A, B]) await h.drop(d).catch(() => {}); });
+afterAll(async () => {
+  if (!available) return;
+  for (const d of [A, B]) await h.drop(d).catch(() => {});
+  const c = new pg.Client({ connectionString: ADMIN }); await c.connect();
+  await c.query(`DROP ROLE IF EXISTS ${provisioner}`); await c.end();
+});
 
 describe("hosted databases", () => {
+  it("administers through a limited login, never a superuser", async () => {
+    if (!available) return;
+    const su = await Hosting.check(ADMIN);
+    if (su.superuser) expect(Hosting.refusal(su)).toMatch(/superuser/);
+    const mine = await Hosting.check(h.adminUrl);
+    expect(mine).toMatchObject({ user: provisioner, superuser: false, canProvision: true });
+    expect(Hosting.refusal(mine)).toBeNull();
+    expect(Hosting.refusal({ ...mine, versionNum: 150004, version: "15.4" })).toMatch(/16 or newer/);
+    expect(Hosting.address("postgresql://x@localhost:5432/postgres")).toEqual({ host: "localhost", port: 5432, ssl: false });
+    expect(() => Hosting.address("postgresql://x@localhost/postgres", "evil host;")).toThrow(/Public address/);
+    await expect(Hosting.dropRole(ADMIN, "postgres")).rejects.toThrow(/Not a provisioner/);
+  });
+
   it("creates an isolated database an app can use and Creama can only read", async () => {
     if (!available) return;
     expect(A).toMatch(/^app_ztest_/);

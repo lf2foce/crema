@@ -1,5 +1,6 @@
-// Ad-hoc reading for people: the SQL editor and the table browser. Same guard as metrics —
-// one SELECT/WITH statement, inside a READ ONLY transaction that is always rolled back.
+// Ad-hoc reading for people: the SQL editor and the table browser. One SELECT/WITH statement
+// (any function except the few that act outside the query, not just the metric allowlist),
+// inside a READ ONLY transaction that is always rolled back.
 import type { Table } from "./types";
 import { assertSingleSelect, bind, placeholders, quoteIdent, quoteQualified, SqlContractError, Warehouse } from "./warehouse";
 
@@ -24,7 +25,7 @@ function cell(v: unknown): unknown {
 
 export async function runSql(wh: Warehouse, sql: string, limit = 500): Promise<ResultSet> {
   let body: string;
-  try { body = assertSingleSelect(sql); } catch (e) {
+  try { body = assertSingleSelect(sql, "editor"); } catch (e) {
     if (e instanceof SqlContractError) throw new ExploreError(`${e.message.replace(/^Definition/, "A query")} The editor is read-only: one SELECT or WITH statement at a time.`);
     throw e;
   }

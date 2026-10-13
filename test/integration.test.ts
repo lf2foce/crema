@@ -15,7 +15,7 @@ import pg from "pg";
 const ADMIN_PG = process.env.CREAMA_TEST_HOSTING_ADMIN_URL ?? "postgresql://localhost:5432/postgres";
 
 if (existsSync(".env.local")) process.loadEnvFile(".env.local");
-const URL = process.env.CREAMA_DEMO_URL ?? "postgresql://creama_reader:creama_readonly@localhost:5432/creama_demo";
+const URL = process.env.CREAMA_DEMO_URL ?? ""; // pnpm demo:db writes it to .env.local
 const ADMIN = process.env.CREAMA_TEST_ADMIN_URL ?? "postgresql:///creama_demo?host=/tmp";
 
 let wh: Warehouse;
@@ -23,6 +23,7 @@ let snap: SchemaSnapshot;
 let available = true;
 
 beforeAll(async () => {
+  if (!URL) { available = false; return; }
   wh = new Warehouse(URL);
   try {
     await wh.query("select 1");
@@ -96,7 +97,7 @@ describe.runIf(() => available)("against the demo database", () => {
   it("catches what the model could get wrong", async () => {
     const nowBased = await verify(wh, { ...mrrPaid, sql: mrrPaid.sql.replaceAll("{{at}}", "now()") }, snap);
     expect(nowBased.ok).toBe(false);
-    expect(nowBased.checks.find((c) => c.id === "reproducible")?.level).toBe("fail");
+    expect(nowBased.error).toMatch(/now is not on the safe analytics allowlist/); // rejected before it runs
 
     const cents = await verify(wh, { kind: "flow", unit: "currency", membersSql: null, memberTable: null,
       sql: "SELECT COALESCE(SUM(total_cents), 0) AS value FROM public.invoices WHERE status = 'paid' AND paid_at >= {{start}} AND paid_at < {{end}}" }, snap);

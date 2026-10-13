@@ -36,6 +36,20 @@ describe("SQL contract", () => {
     expect(assertSingleSelect("SELECT count(*) FROM t WHERE created_at >= {{start}} AND created_at < {{ end }}")).toContain("{{start}}");
     expect(() => assertSingleSelect("select '{{at}}' as value")).toThrow(SqlContractError);
   });
+  it("lets metrics use common date and text functions, and the editor read freely but not act", () => {
+    for (const sql of [
+      "SELECT count(DISTINCT concat(a, b)) AS value FROM t WHERE date(created_at) >= {{start}}",
+      "SELECT max(to_timestamp(ts)) AS value FROM t",
+      "SELECT count(*) AS value FROM generate_series({{start}}, {{end}}, interval '1 day') d",
+    ]) expect(() => assertSingleSelect(sql)).not.toThrow();
+    expect(() => assertSingleSelect("SELECT now() AS value")).toThrow(SqlContractError);
+    expect(() => assertSingleSelect("SELECT version()")).toThrow(SqlContractError);
+    expect(assertSingleSelect("SELECT version(), public.my_report(1), pg_size_pretty(1)", "editor")).toContain("version()");
+    for (const sql of ["SELECT pg_sleep(10)", "SELECT pg_terminate_backend(1)", "SELECT set_config('a', 'b', false)", "SELECT pg_read_file('/etc/passwd')", "SELECT dblink('x', 'y')"]) {
+      expect(() => assertSingleSelect(sql, "editor")).toThrow(SqlContractError);
+    }
+    expect(() => assertSingleSelect("DELETE FROM t", "editor")).toThrow(SqlContractError);
+  });
   it("evaluates every bucket of a series lateral to the bucket, never past the cap", () => {
     const s = seriesSql("select count(*) as value from t where c >= {{start}} and c < {{end}}");
     expect(s).toContain("c >= b.bucket_start and c < b.bucket_end");

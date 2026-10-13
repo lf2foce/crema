@@ -1,17 +1,20 @@
 "use client";
 // Browser-side client for the Creama HTTP API.
-import type { AuditEvent, Concept, EntityReading, Metric, Run, Source, Verification } from "@/core/types";
+import type { AuditEvent, Concept, EntityReading, Metric, Run, Server, Source, Verification } from "@/core/types";
 
 /** A database in the workspace, with counts (from /api/state and /api/sources). */
 export type SourceInfo = Source & { metrics: number; proposals: number; attention: number; sizeBytes: number | null; connections: number | null; missing: boolean };
-export type Hosting = { enabled: boolean; reason: string | null; shared: boolean; address: string | null; ssl: boolean };
+/** A Postgres server Creama creates databases on, with how many it holds. */
+export type ServerInfo = Server & { databases: number };
 
 export type AppState = {
   workspace: string;
   sources: SourceInfo[];
   /** the database this page is about (/s/<slug>), or null on workspace pages */
   source: Source | null;
-  hosting: Hosting;
+  servers: ServerInfo[];
+  /** development: offer the Postgres server in DATABASE_URL as a server, in one click */
+  localServer: boolean;
   model: { name: string; configured: boolean };
   run: { id: number; status: Run["status"]; startedAt: string; finishedAt: string | null; error: string | null } | null;
   understanding: { runId: number; summary: string | null; entities: EntityReading[]; model: string; at: string } | null;
@@ -25,7 +28,7 @@ export type AppState = {
   me: Me | null;
 };
 
-export type { AuditEvent, Concept, Metric, Run, Source, Verification };
+export type { AuditEvent, Concept, Metric, Run, Server, Source, Verification };
 
 // The source this page works in: sent with every API call so the server scopes the request to it.
 let currentSource: string | null = null;

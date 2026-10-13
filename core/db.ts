@@ -3,7 +3,6 @@
 import pg from "pg";
 
 import { MIGRATIONS } from "./migrations";
-import { upgradeLegacy } from "./migrations/legacy";
 
 export { MIGRATIONS };
 
@@ -58,8 +57,7 @@ export async function migrate(pool: pg.Pool, schema?: string, apply = true): Pro
     for (const m of pending) {
       await c.query("BEGIN");
       try {
-        if (m.id === "001_init" && done.has("001_base")) await upgradeLegacy(c);
-        else await c.query(m.sql);
+        await c.query(m.sql);
         await c.query("INSERT INTO creama_migrations (id) VALUES ($1)", [m.id]);
         await c.query("COMMIT");
       } catch (e) {

@@ -4,6 +4,9 @@
 set -euo pipefail
 DB="${CREAMA_DEMO_DB:-creama_demo}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
+# No password ships with the repo: generate one per machine (or pass CREAMA_DEMO_PASSWORD).
+PW="${CREAMA_DEMO_PASSWORD:-$(openssl rand -hex 16)}"
+[[ "$PW" =~ ^[A-Za-z0-9_-]+$ ]] || { echo "CREAMA_DEMO_PASSWORD: letters, digits, - and _ only" >&2; exit 1; }
 
 dropdb --if-exists "$DB"
 createdb "$DB"
@@ -13,8 +16,9 @@ psql -q -d "$DB" -v ON_ERROR_STOP=1 -f "$HERE/seed.sql"
 psql -q -d "$DB" -v ON_ERROR_STOP=1 <<SQL
 DO \$\$ BEGIN
   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'creama_reader') THEN
-    CREATE ROLE creama_reader LOGIN PASSWORD 'creama_readonly';
+    CREATE ROLE creama_reader LOGIN;
   END IF;
+  ALTER ROLE creama_reader PASSWORD '$PW';
 END \$\$;
 GRANT CONNECT ON DATABASE "$DB" TO creama_reader;
 GRANT USAGE ON SCHEMA public TO creama_reader;
@@ -23,4 +27,11 @@ ALTER ROLE creama_reader SET default_transaction_read_only = on;
 SQL
 
 psql -d "$DB" -Atc "select 'accounts', count(*) from accounts union all select 'subscriptions', count(*) from subscriptions union all select 'invoices', count(*) from invoices union all select 'events', count(*) from events" | column -t -s '|'
-echo "✓ demo ready: postgresql://creama_reader:creama_readonly@${PGHOST_DISPLAY:-localhost}:5432/$DB"
+URL="postgresql://creama_reader:$PW@${PGHOST_DISPLAY:-localhost}:5432/$DB"
+# Record the URL in .env.local (the app and the tests read CREAMA_DEMO_URL from there).
+ENV_FILE="$HERE/../.env.local"
+touch "$ENV_FILE"
+grep -v '^CREAMA_DEMO_URL=' "$ENV_FILE" > "$ENV_FILE.tmp" || true
+echo "CREAMA_DEMO_URL=$URL" >> "$ENV_FILE.tmp"
+mv "$ENV_FILE.tmp" "$ENV_FILE"
+echo "✓ demo ready: $DB, role creama_reader (read-only). CREAMA_DEMO_URL saved to .env.local"

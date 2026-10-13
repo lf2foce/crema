@@ -80,14 +80,21 @@ pnpm creama audit
 
 ## Hosted databases
 
-Admins can create Postgres databases for apps built elsewhere (Database → Hosted databases), Neon-style: pick a database, choose the login, copy the connection string or a ready snippet (`.env`, psql, Node.js, Drizzle, Python). Each database gets:
+Admins can create Postgres databases for apps built elsewhere (Databases → New database), Neon-style: pick a database, choose the login, copy the connection string or a ready snippet (`.env`, psql, Node.js, Drizzle, Python). Each database gets:
 
 - an owner login for the app: read/write in its own database only (no superuser, can't create roles or databases, 20 connections)
 - a read-only login Creama uses when you choose **Use in Creama**, so the app's data can be discovered and certified like any other source
 
 Passwords are stored sealed with AES-256-GCM (key: `CREAMA_ENCRYPTION_KEY`, else derived from `BETTER_AUTH_SECRET` — changing it makes stored passwords unreadable; reset them). Hosted databases can't connect to each other (`CONNECT` is revoked from `PUBLIC`). Deleting asks for the database name and is refused while Creama is analysing it.
 
-Where databases are created: `CREAMA_HOSTING_ADMIN_URL` if set, otherwise the Postgres server in `DATABASE_URL` (works out of the box in development). In production use a separate cluster: the hosting login can create roles, apps' load and disk use would hit Creama's own state, app databases must be reachable from the internet while Creama's state shouldn't be, and cluster-level restores would rewind both. Serve it over TLS with `scram-sha-256` in `pg_hba.conf`. Not yet: branching, per-database backups, size quotas, connection pooling.
+Where databases are created: on a **server** an admin adds (Databases → Servers → Add), PostgreSQL 16 or newer. Give it an admin login once:
+
+- a superuser login is used for one statement, to create Creama's own `creama_provisioner_…` role with only `CREATEDB CREATEROLE`; the superuser password is not stored
+- or create such a role yourself and give Creama that login
+
+On PostgreSQL 16+ a role with `CREATEROLE` can only change or drop roles it created, so Creama can't touch other roles or databases on the server. A server can be removed once it holds no databases; its provisioner role stays there for you to drop.
+
+Use a server of its own, not the one in `DATABASE_URL`: apps' load and disk use would hit Creama's state, app databases must be reachable from the internet while Creama's state shouldn't be, and cluster-level restores would rewind both. Serve it over TLS with `scram-sha-256` in `pg_hba.conf`, and back it up at the cluster level (e.g. pgBackRest). In development, **Use this machine** adds the server in `DATABASE_URL` in one click; production never offers it. Not yet: branching, per-database backups, size quotas, connection pooling.
 
 ## What Creama checks (without the model)
 
@@ -108,16 +115,7 @@ Each proposed definition is executed and inspected by code before you see it, an
 - Creama's state lives in Postgres (`DATABASE_URL`), separate from the database it analyses. Certified versions are immutable and the audit log is append-only, enforced by triggers (no UPDATE or DELETE).
 - Every route requires a signed-in person; the certifier is the signed-in account, not a typed name. Only admins change the analysed database or invite people. `/api/v1` also accepts `CREAMA_API_TOKEN` for software.
 - The SQL editor and table browser show raw rows to signed-in people (one read-only `SELECT`/`WITH` at a time). MCP clients never see raw tables: only certified metrics.
-- Each source's connection string is sealed with AES-256-GCM in the state database. Keep the encryption key backed up separately and restrict access to both.
-
-### Upgrading a single-source installation
-
-Back up Creama's state database and keep its encryption key before running `pnpm db:migrate`.
-The legacy `001_base` schema is upgraded transactionally: its saved `database_url` becomes the
-sealed `legacy` source, preserving metrics, certified version payloads and audit records. If old
-metrics have no saved source URL, migration refuses to guess. Existing hosted records and passwords
-are preserved but marked failed pending cluster verification; no hosted database is created or dropped
-by migration. Do not retry those imported records blindly: their existing databases must be reconciled first.
+- Each source's connection string, each server's provisioner login and each hosted database's passwords are sealed with AES-256-GCM in the state database. Keep the encryption key backed up separately and restrict access to both.
 
 ## Architecture
 
@@ -146,7 +144,7 @@ core/compare.ts     row-level diffs between definitions and their explanations
 core/db.ts          Postgres pool + append-only SQL migrations (no ORM)
 core/registry.ts    runs, proposals, immutable versions, audit log, saved queries
 core/explore.ts     SQL editor + table browser (read-only)
-core/hosting.ts     hosted databases: create, isolate, rotate passwords, drop
+core/hosting.ts     servers and hosted databases: limited provisioner, create, isolate, rotate passwords, drop
 core/sqlGuard.ts    fail-closed AST validation of user analytics SQL
 core/jobs.ts        transactional pg-boss enqueue, recovery and discovery worker
 core/mcpTools.ts    the MCP tools, shared by stdio and HTTP
@@ -168,4 +166,4 @@ pnpm test:e2e      # the full loop in a browser, with the real model: connect �
 
 ## License
 
-Apache-2.0
+[MIT](LICENSE)

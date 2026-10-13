@@ -53,7 +53,8 @@ change an already initialized Postgres role; rotate it in Postgres separately.
 Keep `BETTER_AUTH_SECRET` and `CREAMA_ENCRYPTION_KEY` stable across restarts: changing
 encryption keys can make stored source credentials unreadable. This bundled DB's
 bootstrap role is an administrator; for hardened production use a dedicated
-least-privilege state role and a separate hosting cluster. This Compose bundle is
+least-privilege state role. Hosted databases go on a separate Postgres server that an
+admin adds in the app (Databases → Servers); the bundled state DB is never offered for it in production. This Compose bundle is
 not an HA deployment or a backup policy.
 Default runtime limits are 512 MB per service, 0.75 CPU for web/worker/migrate,
 and 0.5 CPU for Postgres; override `CREAMA_APP_MEMORY`, `CREAMA_APP_CPUS`,

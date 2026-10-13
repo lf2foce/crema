@@ -548,6 +548,8 @@ table.plain td.mono { font-size: var(--fs-ui); }
 .sql-side { border-right: 1px solid var(--border); background: var(--subtle); padding: var(--sp-4) var(--sp-3); overflow-y: auto; display: flex; flex-direction: column; gap: var(--sp-2); }
 .sql-side h4 { margin: var(--sp-3) 0 0; font: 400 var(--fs-label) var(--mono); text-transform: uppercase; color: var(--muted); padding: 0 var(--sp-2); }
 .sql-side .input { height: 32px; font-size: var(--fs-ui); }
+.sql-side .side-head { margin-top: var(--sp-4); }
+.sql-side .side-head h4 { margin: 0; }
 .sql-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 1px; }
 .sql-list li { display: flex; align-items: center; border-radius: var(--radius); }
 .sql-list li:hover { background: var(--hover); }
@@ -617,9 +619,7 @@ table.plain td.mono { font-size: var(--fs-ui); }
 .cell-view .copy { position: static; }
 
 .hostedpage { display: grid; grid-template-columns: 240px minmax(0, 1fr); height: calc(100vh - var(--chrome-h)); }
-.hosted-where { margin-top: auto; padding: 0 var(--sp-2); }
 .hosted-main { overflow-y: auto; min-width: 0; }
-.hosted-banner { padding: var(--sp-2) var(--sp-6); background: var(--warn-surface); border-bottom: 1px solid var(--warn-border); font-size: var(--fs-ui); color: var(--warn); }
 .hosted-empty { max-width: 640px; margin: 0 auto; padding: var(--sp-16) var(--sp-6); }
 .hosted-detail { max-width: 860px; margin: 0 auto; padding: var(--sp-8) var(--sp-8) var(--sp-12); display: grid; gap: var(--sp-5); }
 .hosted-detail h1.title { margin: 0; }

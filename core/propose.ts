@@ -1,6 +1,7 @@
 // AI proposes business meaning. Nothing here is ever trusted without verification.
 import { z } from "zod";
 import { generateJson, type Usage } from "./model";
+import { METRIC_FUNCTIONS } from "./sqlGuard";
 import type { Understanding } from "./types";
 
 const confidence = z.enum(["high", "medium", "low"]);
@@ -67,6 +68,9 @@ SQL contract (strict — definitions that break it are rejected automatically):
   OR canceled_at > {{at}})), so it can be computed historically. Never use the current value of a
   mutable status column alone for a snapshot if timestamps allow reconstructing history.
 - Never use now(), current_date, current_timestamp, or $1-style parameters. Only {{start}}, {{end}}, {{at}}.
+- Call only these functions (any other, or any schema-qualified function, is rejected):
+  ${METRIC_FUNCTIONS.join(", ")}.
+  Casts only to built-in scalar types (numeric, int, text, date, timestamptz, interval, jsonb …).
 - Money: if amounts are in cents, divide by 100.0. unit "currency".
 - Ratios: return a fraction between 0 and 1, unit "percent", guard denominators with NULLIF.
 - Members: for every count or sum, provide members_sql with the identical logic, listing the rows
