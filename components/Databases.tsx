@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ago, api, type AppState, type ServerInfo, type SourceInfo } from "@/lib/client";
 import { routes } from "@/lib/routes";
-import { SidebarPortal } from "./AppShell";
 import { Copy, EnvBadge, Modal, useConfirm } from "./ui";
 import { DB_NAME_MAX, dbNameProblem, naturalDbName } from "@/lib/dbName";
 
@@ -57,8 +56,7 @@ export function Databases({ state, selected, server, notify, reload }: { state: 
 
   return (
     <div className="hostedpage">
-      <SidebarPortal>
-      <div className="sql-side nav-embed">
+      <aside className="sql-side">
         {admin && <div className="row gap-2">
           <button className="btn primary sm grow" onClick={create}>+ New project</button>
           <Link className="btn sm grow" href={routes.connect}>Connect existing</Link>
@@ -95,8 +93,7 @@ export function Databases({ state, selected, server, notify, reload }: { state: 
             <button className="btn ghost sm" onClick={() => setAdding(true)}>+ Add a server</button>
           </details>
         )}
-      </div>
-      </SidebarPortal>
+      </aside>
 
       <main className="hosted-main">
         {srv ? <ServerDetail key={srv.id} server={srv} notify={notify} onChanged={() => changed()} />

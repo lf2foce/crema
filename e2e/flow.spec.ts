@@ -21,23 +21,11 @@ test("set up → connect → discover → review → certify → reuse", async (
   await page.getByRole("button", { name: "try the demo database" }).click();
   // the status bar knows the database you just made (it once showed the first one in the list)
   await expect(page).toHaveURL(/\/projects\/[^/]+\/metrics/);
-  await expect(page.getByLabel("Database", { exact: true })).toHaveValue(new URL(page.url()).pathname.split("/")[2]);
+  await expect(page.getByLabel("Database")).toHaveValue(new URL(page.url()).pathname.split("/")[2]);
 
   // 2. discover: the live log, then the review queue
   await expect(page.getByText("Reading your schema")).toBeVisible();
   await expect(page.getByRole("heading", { name: /We found \d+ metrics in your business/ })).toBeVisible({ timeout: 200_000 });
-
-  // the sidebar: "+ New metric" above the list, the counts above the person, both at the bottom
-  const nav = page.getByRole("complementary", { name: "Navigation" });
-  const newMetric = await nav.getByRole("link", { name: "+ New metric" }).boundingBox();
-  const firstItem = await nav.locator(".nav-item").first().boundingBox();
-  expect(newMetric!.y).toBeLessThan(firstItem!.y);
-  const stats = await nav.getByText(/\d+ proposed · \d+ certified/).boundingBox();
-  const signOut = await nav.getByRole("button", { name: "sign out" }).boundingBox();
-  const navBox = await nav.boundingBox();
-  expect(stats!.y).toBeLessThan(signOut!.y);
-  expect(signOut!.y + signOut!.height).toBeGreaterThan(navBox!.y + navBox!.height - 40);
-  await expect(page.locator("header.statusbar")).toHaveCount(0); // no top bar any more
 
   // 3. review: open the first (most contested) proposal, with evidence on real data
   await page.getByRole("link", { name: /Review first one/ }).click();

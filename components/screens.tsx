@@ -121,7 +121,7 @@ export function ProposalScreen() {
   const toList = () => router.push(routes.metrics(slug));
   if (!selected) return <div className="page"><button className="btn sm ghost" onClick={toList}>← Metrics</button><p className="muted">This proposal is no longer open.</p></div>;
   return (
-    <ProposalView key={selected.id} concept={selected} runId={selected.runId} model={state.understanding?.model ?? state.model.name}
+    <ProposalView key={selected.id} concept={selected} queue={proposals} runId={selected.runId} model={state.understanding?.model ?? state.model.name}
       back={toList} notify={notify}
       onCertified={async (key) => { await reload(); router.push(routes.metric(slug, key)); }}
       onChanged={async () => { await reload(); const next = proposals.find((p) => p.id !== selected.id); router.push(next ? routes.proposal(slug, next.id) : routes.metrics(slug)); }} />
