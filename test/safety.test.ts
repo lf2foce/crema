@@ -82,6 +82,39 @@ suite("step 1 safety regressions", () => {
     }
   });
 
+  it("keeps a provisioner login it is given, and offers the bundled server once", async () => {
+    const c = new pg.Client({ connectionString: url }); await c.connect();
+    const role = `creama_provisioner_${randomUUID().replaceAll("-", "").slice(0, 6)}`;
+    await c.query(`CREATE ROLE ${role} LOGIN PASSWORD 'p' CREATEDB CREATEROLE`);
+    const preexisting = new Set((await c.query("SELECT rolname FROM pg_roles WHERE rolname LIKE 'creama\\_provisioner\\_%'")).rows.map((r) => r.rolname));
+    const bundled = new URL(url!); bundled.username = role; bundled.password = "p"; bundled.pathname = "/postgres";
+    const previous = { u: process.env.CREAMA_BUNDLED_SERVER_URL, h: process.env.CREAMA_BUNDLED_SERVER_PUBLIC_HOST };
+    process.env.CREAMA_BUNDLED_SERVER_URL = bundled.toString();
+    process.env.CREAMA_BUNDLED_SERVER_PUBLIC_HOST = "db.example.com:5433";
+    try {
+      const svc = new Creama(new Registry(url, { schema: schema() }));
+      expect((await svc.state()).suggestedServer).toEqual({ name: "Bundled server", publicHost: "db.example.com:5433" });
+      // the first "New database" uses it without asking
+      const name = `bundled_${randomUUID().replaceAll("-", "").slice(0, 6)}`;
+      const source = await svc.createHosted(name, "test");
+      const [server] = await svc.servers();
+      expect(server).toMatchObject({ name: "Bundled server", provisioner: role, publicHost: "db.example.com:5433", ssl: true, databases: 1 });
+      expect(source.serverId).toBe(server.id);
+      expect((await c.query("SELECT rolname FROM pg_roles WHERE rolname LIKE 'creama\\_provisioner\\_%' AND rolname <> $1", [role])).rows.filter((r) => !preexisting.has(r.rolname))).toEqual([]); // kept as is: no new role
+      await svc.removeSource(source.id, "test");
+      expect((await svc.state()).suggestedServer).toBeNull();
+      await expect(svc.addSuggestedServer("test")).rejects.toThrow(/already exists/);
+      // a login that can't provision is refused, never kept
+      await c.query(`ALTER ROLE ${role} NOCREATEROLE`);
+      await expect(svc.addServer({ url: bundled.toString(), name: "weak" }, "test")).rejects.toThrow(/needs CREATEDB and CREATEROLE/);
+    } finally {
+      for (const [k, v] of [["CREAMA_BUNDLED_SERVER_URL", previous.u], ["CREAMA_BUNDLED_SERVER_PUBLIC_HOST", previous.h]] as const) {
+        if (v === undefined) delete process.env[k]; else process.env[k] = v;
+      }
+      await c.query(`DROP ROLE IF EXISTS ${role}`); await c.end();
+    }
+  });
+
   it("checks the pinned version's tables without poisoning the current version", async () => {
     const s = schema();
     await admin.query(`CREATE SCHEMA ${s}; CREATE TABLE ${s}.old_orders (id int); CREATE TABLE ${s}.new_orders (id int); INSERT INTO ${s}.old_orders VALUES (1); INSERT INTO ${s}.new_orders VALUES (2)`);

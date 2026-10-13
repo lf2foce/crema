@@ -37,7 +37,8 @@ docker compose --env-file .env.docker.local ps
 docker compose --env-file .env.docker.local logs --tail=100 web worker migrate
 ```
 
-Three long-lived services: `web`, `worker`, `postgres`. A fourth, `migrate`, is a
+Four long-lived services: `web`, `worker`, `postgres` (Creama's state) and `hosting`
+(the databases Creama creates for apps). A fifth, `migrate`, is a
 one-shot deployment step: Postgres health passes → migrations succeed → web and
 worker start. Postgres 18 persists in a named volume mounted at `/var/lib/postgresql`;
 the official image uses `PGDATA=/var/lib/postgresql/18/docker`.
@@ -87,6 +88,19 @@ docker compose --env-file .env.docker.local stop
 `stop` leaves the volume intact. Do not use `down -v` unless you intentionally want
 to delete Creama's state. Do not paste `docker compose config` output into public
 logs: it expands runtime secrets.
+
+### The hosting server
+
+`hosting` is a separate Postgres 18 with its own volume and superuser
+(`HOSTING_SUPERUSER_PASSWORD`, which only that container sees). On first boot
+`deploy/hosting/init.sh` turns on TLS with a self-signed certificate kept in its data
+directory, makes every TCP connection use TLS and `scram-sha-256`, and creates
+`creama_provisioner` (`CREATEDB CREATEROLE`, no superuser) with `HOSTING_PROVISIONER_PASSWORD`.
+Creama only gets that login (`CREAMA_BUNDLED_SERVER_URL`), and uses this server the first
+time someone creates a database. Apps connect on `CREAMA_HOSTING_PORT` (5433) at
+`CREAMA_HOSTING_PUBLIC_HOST` with `sslmode=require`. The init script runs only on an empty
+volume: changing either password later means `ALTER ROLE` inside the container too.
+Back the volume up at the cluster level; it holds your apps' data.
 
 ## Dokploy / Docker Swarm
 

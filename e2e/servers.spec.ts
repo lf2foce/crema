@@ -40,8 +40,7 @@ test("add a server → create a database → connect → delete → remove the s
   // no server yet: creating a database starts by adding one; production offers no shortcut
   await page.goto("/#databases");
   await page.getByRole("button", { name: "Create a new one" }).click();
-  await expect(page.getByRole("heading", { name: "Add a Postgres server" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Use this machine" })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Add a hosting server" })).toBeVisible();
   await page.getByLabel("Admin connection string").fill(ADMIN_URL);
   await page.getByLabel("Address apps use").fill("db.example.com:6543");
   await page.getByRole("button", { name: "Add server" }).click();
@@ -79,7 +78,7 @@ test("add a server → create a database → connect → delete → remove the s
   page.once("dialog", (d) => d.accept());
   await page.getByRole("button", { name: "Remove" }).click();
   await expect(page.getByText(`Its login ${provisioner} is still on the server`)).toBeVisible();
-  await expect(page.getByText("0 servers")).toBeVisible();
+  await expect(page.getByRole("button", { name: /^db\.example\.com/ })).toHaveCount(0);
 
   expect(errors).toEqual([]);
 });

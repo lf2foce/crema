@@ -28,6 +28,9 @@ x-app: &app
     GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
     CREAMA_DRIFT_CRON: ${CREAMA_DRIFT_CRON:-0 * * * *}
     CREAMA_CURRENCY: ${CREAMA_CURRENCY:-VND}
+    # the bundled hosting server, offered in Databases → Servers: Creama's limited login only
+    CREAMA_BUNDLED_SERVER_URL: postgresql://creama_provisioner:${HOSTING_PROVISIONER_PASSWORD:?Set a URL-safe HOSTING_PROVISIONER_PASSWORD}@hosting:5432/postgres?sslmode=no-verify
+    CREAMA_BUNDLED_SERVER_PUBLIC_HOST: ${CREAMA_HOSTING_PUBLIC_HOST:-localhost:5433}
   logging:
     driver: json-file
     options:
@@ -51,6 +54,30 @@ services:
     # Deliberately no ports: only reachable on the Compose network.
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U creama -d creama"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # Postgres for the apps' databases Creama creates (hosted databases). A separate server from
+  # `postgres` (Creama's own state): own volume, own superuser, reachable from the internet over TLS.
+  hosting:
+    image: postgres:18-bookworm
+    cpus: ${CREAMA_HOSTING_CPUS:-1}
+    mem_limit: ${CREAMA_HOSTING_MEMORY:-1g}
+    shm_size: 256m
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${HOSTING_SUPERUSER_PASSWORD:?Set HOSTING_SUPERUSER_PASSWORD}
+      CREAMA_PROVISIONER_PASSWORD: ${HOSTING_PROVISIONER_PASSWORD:?Set HOSTING_PROVISIONER_PASSWORD}
+    volumes:
+      - hosting-data:/var/lib/postgresql
+      - ./deploy/hosting/init.sh:/docker-entrypoint-initdb.d/10-creama.sh:ro
+    # Apps connect here. Set CREAMA_HOSTING_BIND=127.0.0.1 to keep it local.
+    ports:
+      - "${CREAMA_HOSTING_BIND:-0.0.0.0}:${CREAMA_HOSTING_PORT:-5433}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
       interval: 5s
       timeout: 5s
       retries: 20
@@ -89,3 +116,4 @@ services:
 
 volumes:
   postgres-data:
+  hosting-data:

@@ -269,7 +269,7 @@ function Connect({ state, notify }: { state: AppState; notify: (t: string, e?: b
           )}
         </div>
       </form>
-      {(state.servers.length > 0 || state.localServer) && <p className="connect-alt">No database yet? <a href="/#databases">Create one</a> for your app; Creama can analyse it too.</p>}
+      {(state.servers.length > 0 || state.suggestedServer) && <p className="connect-alt">No database yet? <a href="/#databases">Create one</a> for your app; Creama can analyse it too.</p>}
       <div className="trust-row">
         <span>Never writes to your database</span>
         <span title={`Model: ${state.model.name}`}>No rows sent to the AI</span>

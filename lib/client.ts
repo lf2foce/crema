@@ -13,8 +13,8 @@ export type AppState = {
   /** the database this page is about (/s/<slug>), or null on workspace pages */
   source: Source | null;
   servers: ServerInfo[];
-  /** development: offer the Postgres server in DATABASE_URL as a server, in one click */
-  localServer: boolean;
+  /** a server this installation offers in one click (bundled hosting server, or this machine in development) */
+  suggestedServer: { name: string; publicHost: string | null } | null;
   model: { name: string; configured: boolean };
   run: { id: number; status: Run["status"]; startedAt: string; finishedAt: string | null; error: string | null } | null;
   understanding: { runId: number; summary: string | null; entities: EntityReading[]; model: string; at: string } | null;

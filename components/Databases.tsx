@@ -34,8 +34,9 @@ export function Databases({ state, selected, server, notify, reload }: { state: 
   const go = (id: number) => { window.location.hash = `databases/${id}`; };
   const goServer = (id: number) => { window.location.hash = `databases/server-${id}`; };
   const changed = async (id?: number) => { await reload(); if (id) go(id); else window.location.hash = "databases"; };
-  // "Create a new one" needs a server: without one, adding a server comes first
-  const create = () => (servers.length ? setCreating(true) : setAdding(true));
+  // Creating needs a server: the installation's own one is used without asking; only without one
+  // does the admin add a server first
+  const create = () => (servers.length || state.suggestedServer ? setCreating(true) : setAdding(true));
 
   return (
     <div className="hostedpage">
@@ -56,7 +57,7 @@ export function Databases({ state, selected, server, notify, reload }: { state: 
           ))}
         </ul>
         {admin && <>
-          <div className="row side-head"><h4 className="grow">{servers.length} server{servers.length === 1 ? "" : "s"}</h4><button className="btn ghost sm" onClick={() => setAdding(true)}>+ Add</button></div>
+          <div className="row side-head"><h4 className="grow">Hosting servers</h4><button className="btn ghost sm" onClick={() => setAdding(true)}>+ Add</button></div>
           <ul className="sql-list">
             {servers.map((v) => (
               <li key={v.id} className={`saved ${v.id === srv?.id ? "on" : ""}`}>
@@ -82,7 +83,7 @@ export function Databases({ state, selected, server, notify, reload }: { state: 
       </main>
 
       {creating && <NewDatabase servers={servers} notify={notify} onClose={() => setCreating(false)} onCreated={(id) => { setCreating(false); changed(id); }} />}
-      {adding && <AddServer local={state.localServer} notify={notify} onClose={() => setAdding(false)} onAdded={async (id) => { setAdding(false); await reload(); goServer(id); }} />}
+      {adding && <AddServer notify={notify} onClose={() => setAdding(false)} onAdded={async (id) => { setAdding(false); await reload(); goServer(id); }} />}
     </div>
   );
 }
@@ -114,7 +115,7 @@ function NewDatabase({ servers, notify, onClose, onCreated }: { servers: ServerI
 }
 
 /** Add a Postgres server: an admin login, and the address apps will use. */
-function AddServer({ local, notify, onClose, onAdded }: { local: boolean; notify: (t: string, e?: boolean) => void; onClose: () => void; onAdded: (id: number) => void }) {
+function AddServer({ notify, onClose, onAdded }: { notify: (t: string, e?: boolean) => void; onClose: () => void; onAdded: (id: number) => void }) {
   const [url, setUrl] = useState("");
   const [name, setName] = useState("");
   const [publicHost, setPublicHost] = useState("");
@@ -130,17 +131,11 @@ function AddServer({ local, notify, onClose, onAdded }: { local: boolean; notify
     try { done(await api("/api/servers", { body: { url, name, publicHost, ssl }, source: null })); }
     catch (err) { notify((err as Error).message, true); setBusy(false); }
   };
-  const useLocal = async () => {
-    setBusy(true);
-    try { done(await api("/api/servers", { body: { local: true }, source: null })); }
-    catch (err) { notify((err as Error).message, true); setBusy(false); }
-  };
   return (
     <Modal onClose={onClose}>
       <form className="stack" onSubmit={submit}>
-        <h2 className="schema-h m-0">Add a Postgres server</h2>
-        <p className="use-note m-0">Creama creates databases for your apps here. Use a server of its own, not the one that holds Creama’s data. PostgreSQL 16 or newer.</p>
-        {local && <div className="callout small row"><span className="grow">Developing locally? Use the Postgres server on this machine.</span><button type="button" className="btn sm" disabled={busy} onClick={useLocal}>Use this machine</button></div>}
+        <h2 className="schema-h m-0">Add a hosting server</h2>
+        <p className="use-note m-0">New databases need a Postgres server to live on (PostgreSQL 16 or newer). Use one of its own, not the one that holds Creama’s data.</p>
         <label className="field">Admin connection string<input className="input mono" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="postgresql://postgres:…@db.example.com:5432/postgres" required /></label>
         <p className="use-note m-0">A superuser is used once, to create Creama’s own login with only CREATEDB and CREATEROLE; its password isn’t kept. Or give such a login yourself.</p>
         <div className="row gap-3">

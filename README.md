@@ -94,7 +94,7 @@ Where databases are created: on a **server** an admin adds (Databases → Server
 
 On PostgreSQL 16+ a role with `CREATEROLE` can only change or drop roles it created, so Creama can't touch other roles or databases on the server. A server can be removed once it holds no databases; its provisioner role stays there for you to drop.
 
-Use a server of its own, not the one in `DATABASE_URL`: apps' load and disk use would hit Creama's state, app databases must be reachable from the internet while Creama's state shouldn't be, and cluster-level restores would rewind both. Serve it over TLS with `scram-sha-256` in `pg_hba.conf`, and back it up at the cluster level (e.g. pgBackRest). In development, **Use this machine** adds the server in `DATABASE_URL` in one click; production never offers it. Not yet: branching, per-database backups, size quotas, connection pooling.
+Use a server of its own, not the one in `DATABASE_URL`: apps' load and disk use would hit Creama's state, app databases must be reachable from the internet while Creama's state shouldn't be, and cluster-level restores would rewind both. Serve it over TLS with `scram-sha-256` in `pg_hba.conf`, and back it up at the cluster level (e.g. pgBackRest). **New database** needs no setup when the installation has its own server: the Compose bundle's `hosting` service (`CREAMA_BUNDLED_SERVER_URL`, a provisioner login), or in development the server in `DATABASE_URL`; it's added the first time a database is created. Production never uses Creama's state server. Not yet: branching, per-database backups, size quotas, connection pooling.
 
 ## What Creama checks (without the model)
 

@@ -153,12 +153,11 @@ export class Creama {
     }
   }
 
-  /** Development only: the Postgres server in DATABASE_URL, so hosting works on a laptop in one click. */
-  async addLocalServer(actor: string) {
-    if (!localServerOffered()) throw new CreamaError("Add a server with an admin login instead.", 404);
-    const u = new URL(process.env.DATABASE_URL!);
-    u.pathname = "/postgres";
-    return this.addServer({ url: u.toString(), name: "This machine" }, actor);
+  /** The server this installation suggests (bundled with it, or this machine in development), in one click. */
+  async addSuggestedServer(actor: string) {
+    const offer = suggestedServer();
+    if (!offer) throw new CreamaError("Add a server with an admin login instead.", 404);
+    return this.addServer(offer, actor);
   }
 
   /** Is the server reachable, and does Creama's login still have what it needs? */
@@ -200,7 +199,9 @@ export class Creama {
    * "provisioning"), so a failure part-way leaves a visible, retryable record instead of orphans.
    */
   async createHosted(name: string, actor: string, serverId?: number | null) {
-    const servers = await this.reg.servers(this.scope.workspaceId);
+    let servers = await this.reg.servers(this.scope.workspaceId);
+    // Neon-style: the first database goes on the installation's own server, added on the way
+    if (!servers.length && suggestedServer()) { await this.addSuggestedServer(actor); servers = await this.reg.servers(this.scope.workspaceId); }
     const server = serverId ? servers.find((v) => v.id === serverId) : servers.length === 1 ? servers[0] : null;
     if (!server) throw new CreamaError(servers.length ? "Choose the server to create it on." : "Add a Postgres server first: Creama creates databases on a server you give it.", servers.length ? 400 : 409);
     const h = await this.hostingFor(server.id);
@@ -294,7 +295,9 @@ export class Creama {
   async state() {
     const source = this.scope.source;
     const [sources, servers] = await Promise.all([this.sources(), this.servers()]);
-    const base = { workspace: this.scope.workspaceId, sources, servers, localServer: localServerOffered() && !servers.length, model: { name: modelName(), configured: modelConfigured() }, currency: currentCurrency() };
+    const offer = suggestedServer();
+    const suggested = offer && !servers.some((v) => v.name === offer.name) ? { name: offer.name, publicHost: offer.publicHost } : null;
+    const base = { workspace: this.scope.workspaceId, sources, servers, suggestedServer: suggested, model: { name: modelName(), configured: modelConfigured() }, currency: currentCurrency() };
     if (!source) return { ...base, source: null, run: null, understanding: null, proposals: [] as Concept[], rejected: [] as Concept[], metrics: [] as Metric[] };
     const [run, understood, proposals, rejected, metrics] = await Promise.all([
       this.reg.latestRun(source.id), this.reg.latestRun(source.id, { withSummary: true }),
@@ -731,9 +734,18 @@ function mergeDef(base: Pick<CandidateSpec, "kind" | "unit" | "sql" | "membersSq
   return { kind: e.kind ?? base.kind, unit: e.unit ?? base.unit, sql, membersSql, memberTable: membersSql ? base.memberTable : null };
 }
 
-/** In development, offer the Postgres server in DATABASE_URL as a hosting server. Never in production. */
-function localServerOffered() {
-  return process.env.NODE_ENV !== "production" && !!process.env.DATABASE_URL;
+/**
+ * A server to offer in one click: the hosting server bundled with this installation
+ * (CREAMA_BUNDLED_SERVER_URL, a provisioner login, e.g. compose's `hosting`), else in development the
+ * Postgres server in DATABASE_URL. Production never offers the state server.
+ */
+function suggestedServer(): { url: string; name: string; publicHost: string | null; ssl: boolean | null } | null {
+  const bundled = process.env.CREAMA_BUNDLED_SERVER_URL;
+  if (bundled) return { url: bundled, name: "Bundled server", publicHost: process.env.CREAMA_BUNDLED_SERVER_PUBLIC_HOST || null, ssl: true };
+  if (process.env.NODE_ENV === "production" || !process.env.DATABASE_URL) return null;
+  const u = new URL(process.env.DATABASE_URL);
+  u.pathname = "/postgres";
+  return { url: u.toString(), name: "This machine", publicHost: null, ssl: null };
 }
 
 function hostingError(e: unknown): Error {
