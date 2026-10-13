@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 
-// The Connect page: what a database is labelled is chosen or left alone, and the demo is offered.
-test("connect: three optional labels that toggle, the demo, and nothing else in the way", async ({ page }) => {
+// The Connect page stays compact: a connection string, the alternatives on one line, the three promises.
+test("connect: one input and one action, the demo beside 'create one', the promises", async ({ page }) => {
   await page.goto("/sign-in");
   const first = (await page.getByRole("button", { name: /^(Create admin account|Sign in)$/ }).textContent()) === "Create admin account";
   if (first) await page.getByLabel("Name").fill("E2E Reviewer");
@@ -11,17 +11,16 @@ test("connect: three optional labels that toggle, the demo, and nothing else in 
   await expect(page).not.toHaveURL(/sign-in/);
   await page.goto("/connect");
 
-  const labels = page.getByRole("group", { name: /What is this database/ });
-  await expect(labels.getByRole("button")).toHaveText(["production", "staging", "development"]); // no "not labelled" option
-  for (const b of await labels.getByRole("button").all()) await expect(b).toHaveAttribute("aria-pressed", "false"); // unlabelled by default
-  const prod = labels.getByRole("button", { name: "production" });
-  await prod.click();
-  await expect(prod).toHaveAttribute("aria-pressed", "true");
-  await labels.getByRole("button", { name: "staging" }).click(); // choosing another moves the choice
-  await expect(prod).toHaveAttribute("aria-pressed", "false");
-  await labels.getByRole("button", { name: "staging" }).click(); // clicking it again clears it
-  await expect(labels.getByRole("button", { name: "staging" })).toHaveAttribute("aria-pressed", "false");
-
-  await expect(page.getByText("Never writes to your database")).toHaveCount(0);
-  await expect(page.getByRole("button", { name: /open demo/ })).toBeVisible(); // CREMA_DEMO_URL is set for the e2e run
+  await expect(page.getByLabel("Postgres connection string")).toBeVisible();
+  await expect(page.getByRole("button", { name: /connect & scan/ })).toBeVisible();
+  // no label row and no demo row inside the box: what a database is gets set on its own page afterwards
+  await expect(page.getByRole("group", { name: /What is this database/ })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /open demo/ })).toHaveCount(0);
+  // the demo sits on the "No database yet?" line (CREMA_DEMO_URL is set for the e2e run)
+  const alt = page.locator(".connect-alt");
+  await expect(alt).toContainText("No database yet?");
+  await expect(alt.getByRole("button", { name: "try the demo database" })).toBeVisible();
+  await expect(page.getByText("Never writes to your database")).toBeVisible();
+  await expect(page.getByText("No rows sent to the AI")).toBeVisible();
+  await expect(page.getByText("A person certifies every metric")).toBeVisible();
 });

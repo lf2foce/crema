@@ -93,7 +93,7 @@ export class Crema {
   }
 
   /** Connect a database you already have. Crema reads it in READ ONLY transactions; a read-only role is still advised. */
-  async addExternal(url: string, actor: string, name?: string, environment?: string | null) {
+  async addExternal(url: string, actor: string, name?: string) {
     if (!/^postgres(ql)?:\/\//.test(url)) throw new CremaError("Expected a postgres:// connection string.");
     const wh = new Warehouse(url, 8_000);
     let info: { db: string; usr: string; ro: string; writable: number; tables: number };
@@ -110,7 +110,6 @@ export class Crema {
     const label = (name ?? "").trim() || info.db;
     const source = await this.reg.addSource(this.scope.workspaceId, {
       slug: await this.reg.freeSlug(this.scope.workspaceId, slugify(label)), name: label, kind: "external",
-      environment: toEnvironment(environment),
       connection: seal(url), readOnly: info.ro === "on" || info.writable === 0, writableTables: info.writable,
     }, actor);
     return { source, ...describeUrl(url), tables: info.tables, writableTables: info.writable, readOnlyRole: info.ro === "on" };
