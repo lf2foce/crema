@@ -18,9 +18,9 @@ const dbs: Map<string, Db> = ((globalThis as any).__cremaDbs ??= new Map());
  * step (`pnpm db:migrate`), so several instances never race and a failing migration stops the
  * deploy, not a user's request; the app then refuses to serve against an outdated schema.
  */
-export const autoMigrate = () => process.env.NODE_ENV !== "production" || process.env.CREMA_AUTO_MIGRATE === "1" || process.env.CREAMA_AUTO_MIGRATE === "1";
+export const autoMigrate = () => process.env.NODE_ENV !== "production" || process.env.CREMA_AUTO_MIGRATE === "1";
 
-export function database(url = process.env.DATABASE_URL || process.env.CREMA_DATABASE_URL || process.env.CREAMA_DATABASE_URL, schema?: string): Db {
+export function database(url = process.env.DATABASE_URL || process.env.CREMA_DATABASE_URL, schema?: string): Db {
   if (!url) throw new Error("DATABASE_URL is not set. Crema keeps its state in Postgres: point DATABASE_URL at a database it can write to.");
   const id = `${url}#${schema ?? ""}`;
   const wanted = MIGRATIONS.map((m) => m.id).join(",");

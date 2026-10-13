@@ -8,7 +8,7 @@ import { sessionUser, type SessionUser } from "@/lib/auth";
 type Ctx = { req: Request; r: Crema; actor: string; user: SessionUser | null; body: any; url: URL };
 
 function apiToken(req: Request, url: URL): boolean {
-  const token = process.env.CREMA_API_TOKEN || process.env.CREAMA_API_TOKEN;
+  const token = process.env.CREMA_API_TOKEN;
   if (!token) return false;
   // a header for software; ?token= only for CSV, because spreadsheet IMPORTDATA can't send headers
   const got = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "") || (url.searchParams.get("format") === "csv" ? url.searchParams.get("token") ?? "" : "");
@@ -33,7 +33,7 @@ export function handle(fn: (ctx: Ctx) => Promise<unknown> | unknown, opts: { adm
       const actor = user ? user.name || user.email : "api-token";
       const params = (await route?.params) ?? {};
       let r = crema({ workspaceId: DEFAULT_WORKSPACE });
-      const source = params.source ?? req.headers.get("x-crema-source") ?? req.headers.get("x-creama-source");
+      const source = params.source ?? req.headers.get("x-crema-source");
       if (source) r = await r.withSource(decodeURIComponent(source));
       const out = await fn({ req, r, actor, user, body: { ...body, ...params }, url });
       if (out instanceof Response) return out; // non-JSON formats (CSV) build their own response

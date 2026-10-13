@@ -7,7 +7,7 @@ import { Crema } from "../core/service";
 import { closePools } from "../core/warehouse";
 import { closeDatabases } from "../core/db";
 
-const url = process.env.CREMA_SAFETY_TEST_URL || process.env.CREAMA_SAFETY_TEST_URL;
+const url = process.env.CREMA_SAFETY_TEST_URL;
 const suite = url ? describe : describe.skip;
 const schemas: string[] = [];
 const schema = () => { const s = `safety_${randomUUID().replaceAll("-", "")}`; schemas.push(s); return s; };

@@ -114,7 +114,7 @@ export async function closeJobs() {
 }
 
 /** One durable hourly schedule for the current single-workspace UI. Set 'off' to disable. */
-export async function startDriftWorker(reg: Registry, cron = process.env.CREMA_DRIFT_CRON ?? process.env.CREAMA_DRIFT_CRON ?? "0 * * * *") {
+export async function startDriftWorker(reg: Registry, cron = process.env.CREMA_DRIFT_CRON ?? "0 * * * *") {
   const boss = await jobs(reg);
   if (cron === "off") { await boss.unschedule(DRIFT_QUEUE); return; }
   await boss.schedule(DRIFT_QUEUE, cron, { workspaceId: "default" });

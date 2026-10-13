@@ -1,7 +1,6 @@
 node_modules
 .next
 .crema*
-.creama*
 .env*.local
 .env
 next-env.d.ts

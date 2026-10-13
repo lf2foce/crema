@@ -3,7 +3,7 @@ import type { MetricUnit } from "./types";
 
 // Money is shown in one workspace currency. The server reads CREMA_CURRENCY; the browser is
 // told through /api/state (see setCurrency). Default is the dong: this is built for Vietnamese teams.
-let currency = (typeof process !== "undefined" && (process.env?.CREMA_CURRENCY || process.env?.CREAMA_CURRENCY)) || "VND";
+let currency = (typeof process !== "undefined" && process.env?.CREMA_CURRENCY) || "VND";
 
 export function setCurrency(code: string | null | undefined) {
   if (code && /^[A-Za-z]{3}$/.test(code)) currency = code.toUpperCase();

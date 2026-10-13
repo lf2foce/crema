@@ -6,7 +6,7 @@ import { Registry } from "../core/registry";
 import { closeDatabases } from "../core/db";
 import { closeJobs, DISCOVERY_QUEUE, DRIFT_QUEUE, enqueueDiscovery, jobs, processDiscovery, queueSchema, startDriftWorker, type DiscoveryTask } from "../core/jobs";
 
-const url = process.env.CREMA_SAFETY_TEST_URL || process.env.CREAMA_SAFETY_TEST_URL;
+const url = process.env.CREMA_SAFETY_TEST_URL;
 const suite = url ? describe : describe.skip;
 const schema = `queue_${randomUUID().replaceAll("-", "")}`;
 let reg: Registry;

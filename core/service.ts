@@ -756,8 +756,8 @@ function mergeDef(base: Pick<CandidateSpec, "kind" | "unit" | "sql" | "membersSq
  * Postgres server in DATABASE_URL. Production never offers the state server.
  */
 function suggestedServer(): { url: string; name: string; publicHost: string | null; ssl: boolean | null } | null {
-  const bundled = process.env.CREMA_BUNDLED_SERVER_URL || process.env.CREAMA_BUNDLED_SERVER_URL;
-  if (bundled) return { url: bundled, name: "Bundled server", publicHost: process.env.CREMA_BUNDLED_SERVER_PUBLIC_HOST || process.env.CREAMA_BUNDLED_SERVER_PUBLIC_HOST || null, ssl: true };
+  const bundled = process.env.CREMA_BUNDLED_SERVER_URL;
+  if (bundled) return { url: bundled, name: "Bundled server", publicHost: process.env.CREMA_BUNDLED_SERVER_PUBLIC_HOST || null, ssl: true };
   if (process.env.NODE_ENV === "production" || !process.env.DATABASE_URL) return null;
   const u = new URL(process.env.DATABASE_URL);
   u.pathname = "/postgres";

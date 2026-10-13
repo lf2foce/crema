@@ -7,7 +7,7 @@ import pg from "pg";
 import { randomUUID } from "node:crypto";
 import { Hosting, password } from "../core/hosting";
 
-const ADMIN = process.env.CREMA_TEST_HOSTING_ADMIN_URL || process.env.CREAMA_TEST_HOSTING_ADMIN_URL || "postgresql://localhost:5432/postgres";
+const ADMIN = process.env.CREMA_TEST_HOSTING_ADMIN_URL ?? "postgresql://localhost:5432/postgres";
 let h: Hosting;
 // what the service stores before provisioning: a token per database and both passwords
 const make = (dbName: string) => ({ dbName, token: randomUUID(), ownerPassword: password(), readerPassword: password() });

@@ -64,8 +64,7 @@ function createAuth() {
             // simultaneous sign-ups only the one whose INSERT lands becomes admin
             const policy = setupPolicy();
             if (policy.blocked) throw new APIError("FORBIDDEN", { message: policy.blocked });
-            const given = ctx?.headers?.get("x-crema-setup-token") ?? ctx?.request?.headers.get("x-crema-setup-token")
-              ?? ctx?.headers?.get("x-creama-setup-token") ?? ctx?.request?.headers.get("x-creama-setup-token");
+            const given = ctx?.headers?.get("x-crema-setup-token") ?? ctx?.request?.headers.get("x-crema-setup-token");
             if (policy.tokenRequired && !tokenMatches(given)) throw new APIError("FORBIDDEN", { message: "Wrong or missing setup token." });
             const claim = await pool.query(
               `INSERT INTO settings (key, value) VALUES ('admin_claimed', $1)

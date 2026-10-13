@@ -4,7 +4,7 @@
 import { createCipheriv, createDecipheriv, hkdfSync, randomBytes } from "node:crypto";
 
 function key(): Buffer {
-  const base = process.env.CREMA_ENCRYPTION_KEY || process.env.CREAMA_ENCRYPTION_KEY || process.env.BETTER_AUTH_SECRET;
+  const base = process.env.CREMA_ENCRYPTION_KEY || process.env.BETTER_AUTH_SECRET;
   if (!base) throw new Error("Set CREMA_ENCRYPTION_KEY (or BETTER_AUTH_SECRET) to store database passwords.");
   return Buffer.from(hkdfSync("sha256", base, "crema", "sealed-secrets/v1", 32));
 }

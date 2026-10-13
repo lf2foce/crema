@@ -15,8 +15,8 @@ import pg from "pg";
 const ADMIN_PG = process.env.CREMA_TEST_HOSTING_ADMIN_URL ?? "postgresql://localhost:5432/postgres";
 
 if (existsSync(".env.local")) process.loadEnvFile(".env.local");
-const URL = process.env.CREMA_DEMO_URL || process.env.CREAMA_DEMO_URL || ""; // pnpm demo:db writes it to .env.local
-const ADMIN = process.env.CREMA_TEST_ADMIN_URL || process.env.CREAMA_TEST_ADMIN_URL || "postgresql:///crema_demo?host=/tmp";
+const URL = process.env.CREMA_DEMO_URL ?? ""; // pnpm demo:db writes it to .env.local
+const ADMIN = process.env.CREMA_TEST_ADMIN_URL ?? "postgresql:///crema_demo?host=/tmp";
 
 let wh: Warehouse;
 let snap: SchemaSnapshot;
@@ -34,7 +34,7 @@ beforeAll(async () => {
 
 });
 // Crema's state goes to a throwaway schema per test, dropped at the end.
-const STATE_URL = process.env.CREMA_TEST_STATE_URL || process.env.CREAMA_TEST_STATE_URL || "postgresql://localhost:5432/crema_test";
+const STATE_URL = process.env.CREMA_TEST_STATE_URL ?? "postgresql://localhost:5432/crema_test";
 const schemas: string[] = [];
 function freshRegistry() {
   const schema = `t_${process.pid}_${schemas.length}_${Math.random().toString(36).slice(2, 8)}`;
