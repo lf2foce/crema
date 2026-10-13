@@ -102,6 +102,16 @@ A hosted database is a project's **main** branch. **New branch** (e.g. `dev`) ma
 
 It's a copy, not Neon's copy-on-write: time and disk grow with main's size. Main is never reset, and can't be deleted while it has branches. A separate database doesn't stop a development app from messaging real customers: turn off outbound messages, webhooks, payments and cron there.
 
+Copies are operations, safe across restarts: queue insertion, the operation ID, status and audit event commit
+together. Completed or superseded operation deliveries are no-ops. Copy, reset and
+delete coordinate through a state-DB advisory lock. If initial branch creation is
+interrupted before enqueue, its failed source remains retryable (it is not reported
+as a running copy). Failed/expired queue operations can be reset again.
+
+When upgrading to migration `006_branch_operations`, stop the previous worker first,
+apply migrations, then start the updated web and worker. Do not run the old branch
+worker alongside this version: it does not understand operation IDs.
+
 ## What Crema checks (without the model)
 
 Each proposed definition is executed and inspected by code before you see it, and again at the moment you certify it:

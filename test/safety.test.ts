@@ -1,7 +1,7 @@
 // Real Postgres checks, opt-in on a disposable cluster. Never reads .env files.
 import { randomUUID } from "node:crypto";
 import pg from "pg";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 import { Registry } from "../core/registry";
 import { Crema } from "../core/service";
 import { closePools } from "../core/warehouse";
@@ -142,6 +142,7 @@ suite("step 1 safety regressions", () => {
       await as(`${main}_owner`, main, (c) => c.query("CREATE TABLE orders (id serial PRIMARY KEY, total int); INSERT INTO orders (total) VALUES (10), (20)"));
 
       const dev = await svc.createBranch(root.id, { branch: "dev" }, "test");
+      const firstOperation = (await svc.reg.db.pool.query("SELECT branch_job_id FROM sources WHERE id = $1", [dev.id])).rows[0].branch_job_id;
       expect(dev).toMatchObject({ status: "provisioning", dbName: `${main}_dev`, parentId: root.id, branch: "dev", branchCopy: "data" });
       await svc.copyBranch(dev.id); // the worker's job
       const ready = (await svc.reg.source("default", dev.id))!;
@@ -158,7 +159,31 @@ suite("step 1 safety regressions", () => {
       const login = await svc.hostedConnection(dev.id, "owner");
       await as(`${main}_dev_owner`, `${main}_dev`, (c) => c.query("INSERT INTO orders (total) VALUES (99)"));
       expect(await count(`${main}_owner`, main)).toBe(2); // main untouched
+      // Redelivery after ready/commit but before queue acknowledgement never erases DEV edits.
+      await svc.copyBranch(dev.id, firstOperation, true);
+      expect(await count(`${main}_dev_owner`, `${main}_dev`)).toBe(3);
+
+      const { jobs } = await import("../core/jobs");
+      const boss = await jobs(svc.reg);
+      const send = vi.spyOn(boss, "send").mockRejectedValueOnce(new Error("queue unavailable"));
+      try { await expect(svc.resetBranch(dev.id, "test")).rejects.toThrow(/queue unavailable/); }
+      finally { send.mockRestore(); }
+      expect((await svc.reg.source("default", dev.id))!.status).toBe("ready");
+      expect((await svc.reg.db.pool.query("SELECT branch_job_id FROM sources WHERE id = $1", [dev.id])).rows[0].branch_job_id).toBe(firstOperation);
+
+      // A running copy holds the same lock that delete, reset and other workers must acquire.
+      const held = await svc.reg.db.pool.connect();
+      const lockKey = (await import("../core/jobs")).branchLockKey(svc.reg, dev.id);
+      await held.query("SELECT pg_advisory_lock(hashtext($1))", [lockKey]);
+      try {
+        await expect(svc.removeSource(dev.id, "test")).rejects.toThrow(/being copied or deleted/);
+        await expect(svc.resetBranch(dev.id, "test")).rejects.toThrow(/being copied or deleted/);
+        await expect(svc.copyBranch(dev.id)).rejects.toThrow(/being copied or deleted/);
+      } finally { await held.query("SELECT pg_advisory_unlock(hashtext($1))", [lockKey]); held.release(); }
       expect((await svc.resetBranch(dev.id, "test")).status).toBe("provisioning");
+      // A stale delivery cannot execute the new reset operation.
+      await svc.copyBranch(dev.id, firstOperation, true);
+      expect(await count(`${main}_dev_owner`, `${main}_dev`)).toBe(3);
       await svc.copyBranch(dev.id);
       expect(await count(`${main}_dev_owner`, `${main}_dev`)).toBe(2);
       expect((await svc.hostedConnection(dev.id, "owner")).password).toBe(login.password);

@@ -286,6 +286,10 @@ export class Crema {
    * data or schema only. Not instant and not copy-on-write: it copies.
    */
   async createBranch(parentId: number, input: { branch?: string | null; copy?: string | null }, actor: string) {
+    return this.branchLock(parentId, () => this.createBranchLocked(parentId, input, actor));
+  }
+
+  private async createBranchLocked(parentId: number, input: { branch?: string | null; copy?: string | null }, actor: string) {
     const parent = await this.reg.source(this.scope.workspaceId, parentId);
     if (!parent || parent.kind !== "hosted" || !parent.dbName) throw new CremaError("Hosted database not found.", 404);
     if (parent.parentId) throw new CremaError("Branch from the project's main database.", 400);
@@ -303,9 +307,9 @@ export class Crema {
     if (taken.length) throw new CremaError(`“${taken[0]}” already exists on this server.`, 409);
     const source = await this.reg.addSource(this.scope.workspaceId, {
       slug: await this.reg.freeSlug(this.scope.workspaceId, `${parent.slug}_${branch}`), name: parent.name,
-      kind: "hosted", status: "provisioning", dbName, readOnly: true, serverId: parent.serverId, parentId: parent.id, branch,
+      kind: "hosted", status: "failed", dbName, readOnly: true, serverId: parent.serverId, parentId: parent.id, branch,
     }, actor);
-    await this.reg.updateSource(source.id, { branchCopy: copy });
+    await this.reg.updateSource(source.id, { branchCopy: copy, error: "Copy has not been queued yet. Retry to start it." });
     await this.queueBranchCopy(source, actor, "branch.created");
     return (await this.reg.source(this.scope.workspaceId, source.id))!;
   }
@@ -314,26 +318,49 @@ export class Crema {
   async resetBranch(id: number, actor: string, copy?: string | null) {
     const source = await this.reg.source(this.scope.workspaceId, id);
     if (!source || !source.parentId) throw new CremaError("Only a branch can be reset; the main database never is.", 400);
-    if (source.status === "provisioning") throw new CremaError("This branch is already being copied.", 409);
-    if (copy === "schema" || copy === "data") await this.reg.updateSource(id, { branchCopy: copy });
-    await this.reg.updateSource(id, { status: "provisioning", error: null });
-    await this.queueBranchCopy(source, actor, "branch.reset");
+    await this.queueBranchCopy(source, actor, "branch.reset", copy === "schema" || copy === "data" ? copy : undefined);
     return (await this.reg.source(this.scope.workspaceId, id))!;
   }
 
-  private async queueBranchCopy(source: Source, actor: string, action: string) {
+  private async queueBranchCopy(source: Source, actor: string, action: string, copy?: "data" | "schema") {
     const { enqueueBranchCopy } = await import("./jobs");
-    await enqueueBranchCopy(this.reg, { workspaceId: this.scope.workspaceId, sourceId: source.id });
-    await this.ev(actor, action, `source:${source.slug}`, { branch: source.branch }, source);
+    try { await enqueueBranchCopy(this.reg, { workspaceId: this.scope.workspaceId, sourceId: source.id }, actor, action, copy); }
+    catch (e) { throw new CremaError((e as Error).message, 409); }
   }
 
   /**
    * The worker's job: (re)create the branch's database with its stored logins, then copy main into it.
    * Safe to run again after a crash: it starts from an empty database every time.
    */
-  async copyBranch(id: number) {
+  private async branchLock<T>(id: number, fn: () => Promise<T>): Promise<T> {
+    const { branchLockKey } = await import("./jobs");
+    const key = branchLockKey(this.reg, id);
+    await this.reg.db.ready;
+    const c = await this.reg.db.pool.connect();
+    let locked = false;
+    try {
+      locked = (await c.query("SELECT pg_try_advisory_lock(hashtext($1)) AS ok", [key])).rows[0].ok;
+      if (!locked) throw new CremaError("This branch is being copied or deleted. Try again after it finishes.", 409);
+      return await fn();
+    } finally {
+      if (locked) await c.query("SELECT pg_advisory_unlock(hashtext($1))", [key]).catch(() => {});
+      c.release();
+    }
+  }
+
+  async copyBranch(id: number, operationId?: string, queueDelivery = false) {
+    return this.branchLock(id, () => this.copyBranchLocked(id, operationId, queueDelivery));
+  }
+
+  private async copyBranchLocked(id: number, operationId?: string, queueDelivery = false) {
     const source = await this.reg.source(this.scope.workspaceId, id);
     if (!source || !source.parentId || !source.dbName) return; // removed meanwhile
+    const op = (await this.reg.db.pool.query("SELECT branch_job_id, branch_completed_job_id FROM sources WHERE id = $1", [id])).rows[0];
+    // Legacy deliveries cannot execute a newer operation. Direct test/manual calls use the current one.
+    if (queueDelivery && !operationId && op.branch_job_id) return;
+    const current = operationId ?? op.branch_job_id;
+    if (current && (current !== op.branch_job_id || current === op.branch_completed_job_id)) return;
+    if (!current && source.status === "ready") return;
     const parent = await this.reg.source(this.scope.workspaceId, source.parentId);
     try {
       if (!parent?.dbName || parent.status !== "ready") throw new CremaError("Its main database isn’t ready.");
@@ -347,9 +374,11 @@ export class Crema {
       const { cloneDatabase } = await import("./clone");
       const copy = (await this.reg.sourceSecrets(id)).branchCopy ?? "data";
       await cloneDatabase(h.internalUrl(parent.dbName, `${parent.dbName}_owner`, parentOwner), h.internalUrl(source.dbName, r.owner, secrets.ownerPassword), { schemaOnly: copy === "schema" });
-      await this.reg.updateSource(id, { status: "ready", error: null, readOnly: true, branchedAt: new Date().toISOString(), connection: seal(h.internalUrl(source.dbName, r.reader, secrets.readerPassword)) });
+      await this.reg.tx(async (c) => {
+        await c.query("UPDATE sources SET status = 'ready', error = NULL, read_only = true, branched_at = now(), connection = $2, branch_completed_job_id = $3 WHERE id = $1", [id, seal(h.internalUrl(source.dbName!, r.reader, secrets.readerPassword)), current]);
+        await this.reg.event({ workspaceId: this.scope.workspaceId, sourceId: id }, "crema", "branch.copied", `source:${source.slug}`, { from: parent.slug, copy, operationId: current }, c);
+      });
       tablesCache.delete(id);
-      await this.ev("crema", "branch.copied", `source:${source.slug}`, { from: parent.slug, copy }, source);
     } catch (e) {
       const message = e instanceof CremaError ? e.message : hostingError(e).message;
       await this.reg.updateSource(id, { status: "failed", error: message });
@@ -396,6 +425,10 @@ export class Crema {
    * the same name leaves theirs alone. An external one is only forgotten.
    */
   async removeSource(id: number, actor: string) {
+    return this.branchLock(id, () => this.removeSourceLocked(id, actor));
+  }
+
+  private async removeSourceLocked(id: number, actor: string) {
     const source = await this.reg.source(this.scope.workspaceId, id);
     if (!source) throw new CremaError("Database not found.", 404);
     const branches = (await this.reg.sources(this.scope.workspaceId)).filter((s) => s.parentId === id);

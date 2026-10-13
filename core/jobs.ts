@@ -130,20 +130,36 @@ export async function startDriftWorker(reg: Registry, cron = process.env.CREMA_D
   });
 }
 
-export type BranchTask = { workspaceId: string; sourceId: number };
+export type BranchTask = { workspaceId: string; sourceId: number; operationId?: string };
+
+/** The one advisory-lock key that copy, reset and delete of a branch (or a main's create-branch) share. */
+export const branchLockKey = (reg: Registry, sourceId: number) => `crema.branch:${reg.opts.schema ?? "public"}:${sourceId}`;
 
 /** Queue a branch copy; the source row already says "provisioning". */
-export async function enqueueBranchCopy(reg: Registry, task: BranchTask) {
+export async function enqueueBranchCopy(reg: Registry, task: BranchTask, actor = "crema", action = "branch.reset", copy?: "data" | "schema") {
   const boss = await jobs(reg);
-  // one copy per branch at a time; a second request while one is queued is the same job
-  const id = await boss.send(BRANCH_QUEUE, task, { singletonKey: `branch:${task.sourceId}` });
-  return id;
+  return reg.tx(async (c) => {
+    const lock = await c.query("SELECT pg_try_advisory_xact_lock(hashtext($1)) AS ok", [branchLockKey(reg, task.sourceId)]);
+    if (!lock.rows[0].ok) throw new Error("This branch is being copied or deleted. Try again after it finishes.");
+    const row = (await c.query("SELECT * FROM sources WHERE id = $1 AND workspace_id = $2 AND deleted_at IS NULL FOR UPDATE", [task.sourceId, task.workspaceId])).rows[0];
+    if (!row?.parent_id) throw new Error("Only a live branch can be copied.");
+    if (row.status === "provisioning" && row.branch_job_id) {
+      const active = await boss.getJobById(BRANCH_QUEUE, row.branch_job_id);
+      if (active && !["failed", "cancelled", "completed"].includes(active.state)) throw new Error("This branch is already being copied.");
+    }
+    const operationId = randomUUID();
+    await c.query("UPDATE sources SET status = 'provisioning', error = NULL, branch_job_id = $2, branch_copy = coalesce($3, branch_copy, 'data') WHERE id = $1", [task.sourceId, operationId, copy ?? null]);
+    const sent = await boss.send(BRANCH_QUEUE, { ...task, operationId }, { id: operationId, db: { executeSql: (text, values) => c.query(text, values) } });
+    if (!sent) throw new Error("Branch copy could not be queued.");
+    await reg.event({ workspaceId: task.workspaceId, sourceId: task.sourceId }, actor, action, `source:${row.slug}`, { operationId, branch: row.branch }, c);
+    return sent;
+  });
 }
 
 export async function startBranchWorker(reg: Registry) {
   const boss = await jobs(reg);
   await boss.work<BranchTask>(BRANCH_QUEUE, { batchSize: 1, localConcurrency: 1, pollingIntervalSeconds: 2 }, async (batch) => {
     const { Crema } = await import("./service");
-    for (const job of batch) await new Crema(reg, { workspaceId: job.data.workspaceId, source: null }).copyBranch(job.data.sourceId);
+    for (const job of batch) await new Crema(reg, { workspaceId: job.data.workspaceId, source: null }).copyBranch(job.data.sourceId, job.data.operationId, true);
   });
 }
