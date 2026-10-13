@@ -12,6 +12,7 @@ import { SqlEditor } from "./SqlEditor";
 import { Tables } from "./Tables";
 import { People } from "./People";
 import { Databases } from "./Databases";
+import { EnvBadge } from "./ui";
 import { authClient } from "@/lib/authClient";
 
 export type Sel = { type: "list" } | { type: "business" } | { type: "new" } | { type: "schema" } | { type: "sql" } | { type: "people" } | { type: "databases"; id: number | null; server?: number } | { type: "connect" } | { type: "tables"; table: string | null } | { type: "proposal"; id: number } | { type: "metric"; key: string };
@@ -150,11 +151,21 @@ const isDatabase = (s: Sel) => s.type === "schema" || s.type === "tables" || s.t
 function DatabaseTabs({ sel, state }: { sel: Sel; state: AppState }) {
   const tabs: [Sel["type"], string, string][] = [["schema", "Schema", "#schema"], ["tables", "Tables", "#tables"], ["sql", "SQL editor", "#sql"]];
   const src = state.source!;
+  const siblings = state.sources.filter((d) => d.projectId === src.projectId && d.status === "ready");
   return (
     <nav className="dbtabs" aria-label="Database">
+      <a href={`/#databases/${src.id}`}>Connect</a>
       {tabs.map(([t, label, href]) => <a key={t} href={href} className={sel.type === t ? "on" : ""} aria-current={sel.type === t ? "page" : undefined}>{label}</a>)}
       <span className="grow" />
-      <span className="dbtabs-note">{src.name} · {src.kind === "hosted" ? "hosted" : "connected"} · read-only{!src.readOnly ? " transactions (this login can write)" : ""}</span>
+      <span className="dbtabs-env">
+        <EnvBadge environment={src.environment} />
+        {siblings.length > 1
+          ? <select aria-label="Branch" value={src.slug} onChange={(e) => { window.location.href = sourceHref(e.target.value, window.location.hash); }}>
+              {siblings.map((d) => <option key={d.id} value={d.slug}>{d.projectName} · {d.branch}</option>)}
+            </select>
+          : <span className="dbtabs-note">{src.name}</span>}
+        <span className="dbtabs-note">{src.kind === "hosted" ? "hosted" : "connected"} · read-only{!src.readOnly ? " transactions (this login can write)" : ""}</span>
+      </span>
     </nav>
   );
 }
@@ -229,16 +240,17 @@ function Shell({ state, sel, children }: { state?: AppState; sel: Sel; children:
 
 function Connect({ state, notify }: { state: AppState; notify: (t: string, e?: boolean) => void }) {
   const [url, setUrl] = useState("");
+  const [environment, setEnvironment] = useState(""); // what this database is: chosen by the person, never assumed
   const [busy, setBusy] = useState(false);
   const admin = state.me?.role === "admin";
-  const go = useCallback(async (body: unknown) => {
+  const go = useCallback(async (body: Record<string, unknown>) => {
     setBusy(true);
     try {
-      const r = await api<{ source: { slug: string }; writableTables: number; readOnlyRole: boolean }>("/api/sources", { body, source: null });
+      const r = await api<{ source: { slug: string }; writableTables: number; readOnlyRole: boolean }>("/api/sources", { body: { ...body, environment: environment || null }, source: null });
       if (state.model.configured) await api("/api/discover", { body: {}, source: r.source.slug });
       window.location.href = sourceHref(r.source.slug);
     } catch (e) { notify((e as Error).message, true); setBusy(false); }
-  }, [state.model.configured, notify]);
+  }, [state.model.configured, notify, environment]);
   useEffect(() => {
     if (!state.demoAvailable || !admin) return;
     const onKey = (e: KeyboardEvent) => { if ((e.key === "d" || e.key === "D") && !(e.target as HTMLElement).closest("input, textarea, select") && !busy) go({ demo: true }); };
@@ -255,6 +267,12 @@ function Connect({ state, notify }: { state: AppState; notify: (t: string, e?: b
         <div className="palette-input">
           <span className="prompt" aria-hidden>›</span>
           <input placeholder="postgresql://readonly@host:5432/db" value={url} onChange={(e) => setUrl(e.target.value)} autoFocus spellCheck={false} aria-label="Postgres connection string" />
+        </div>
+        <div className="palette-env" role="group" aria-label="What is this database? (optional)">
+          <span className="muted">This database is</span>
+          {([["", "not labelled"], ["production", "production"], ["staging", "staging"], ["development", "development"]] as const).map(([v, label]) => (
+            <button key={v} type="button" aria-pressed={environment === v} className={environment === v ? "on" : ""} onClick={() => setEnvironment(v)}>{label}</button>
+          ))}
         </div>
         <div className="palette-opts">
           <button type="submit" className={url || !state.demoAvailable ? "on" : ""} disabled={busy || !url}>

@@ -1,6 +1,6 @@
 "use client";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import type { Check, Confidence, MetricUnit, SeriesPoint } from "@/core/types";
+import type { Check, Confidence, Environment, MetricUnit, SeriesPoint } from "@/core/types";
 import { display } from "@/core/format";
 
 export const SERIES = ["var(--s0)", "var(--s1)", "var(--s2)"];
@@ -260,4 +260,13 @@ export function useConfirm() {
   const ask = useCallback((opts: ConfirmOptions) => new Promise<ConfirmResult>((resolve) => setReq({ opts, resolve })), []);
   const dialog = req ? <ConfirmDialog opts={req.opts} onDone={(r) => { req.resolve(r); setReq(null); }} /> : null;
   return [ask, dialog] as const;
+}
+
+// ---------- environments ----------
+
+const ENV_LABEL: Record<Environment, string> = { production: "PROD", staging: "STG", development: "DEV" };
+/** Says what a database is for. Production is the loud one: it's what real people use. Nothing for an unlabelled database. */
+export function EnvBadge({ environment }: { environment: Environment | null }) {
+  if (!environment) return null;
+  return <span className={`env env-${environment}`} title={environment}>{ENV_LABEL[environment]}</span>;
 }

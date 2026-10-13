@@ -1,7 +1,7 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
 import { ago, api, sourceHref, type AppState, type ServerInfo, type SourceInfo } from "@/lib/client";
-import { Copy, Modal, useConfirm } from "./ui";
+import { Copy, EnvBadge, Modal, useConfirm } from "./ui";
 import { DB_NAME_MAX, dbNameProblem, naturalDbName } from "@/lib/dbName";
 
 type Conn = { host: string; port: number; database: string; user: string; password: string; ssl: boolean; connectionString: string };
@@ -24,20 +24,18 @@ const FORMATS: { id: string; label: string; render: (url: string) => string }[] 
 ];
 
 /**
- * Every database in the workspace, Neon-style: the ones you connected and the ones Crema created
- * for your apps, plus the Postgres servers it creates them on. Pick one to see how to connect,
- * open it in Crema, or manage it.
+ * Projects, Neon-style. A project is what you name (ComicAI); its branches are databases: production,
+ * development, staging. Connected databases are projects of one branch. Pick a branch to see how to
+ * connect, browse its tables, open it in Crema, or manage it; hosting servers are listed below.
  */
 export function Databases({ state, selected, server, notify, reload }: { state: AppState; selected: number | null; server: number | null; notify: (t: string, e?: boolean) => void; reload: () => void }) {
   const [creating, setCreating] = useState(false);
   const [adding, setAdding] = useState(false);
   const admin = state.me?.role === "admin";
-  // a project's branches right under its main database
-  const list = [...state.sources.filter((d) => !d.parentId).flatMap((d) => [d, ...state.sources.filter((b) => b.parentId === d.id)]),
-    ...state.sources.filter((b) => b.parentId && !state.sources.some((d) => d.id === b.parentId))];
+  const projects = groupProjects(state.sources);
   const servers = state.servers;
   const srv = server ? servers.find((v) => v.id === server) ?? null : null;
-  const db = srv ? null : list.find((d) => d.id === selected) ?? list[0] ?? null;
+  const db = srv ? null : state.sources.find((d) => d.id === selected) ?? projects[0]?.branches[0] ?? null;
   const go = (id: number) => { window.location.hash = `databases/${id}`; };
   const goServer = (id: number) => { window.location.hash = `databases/server-${id}`; };
   const changed = async (id?: number) => { await reload(); if (id) go(id); else window.location.hash = "databases"; };
@@ -49,17 +47,20 @@ export function Databases({ state, selected, server, notify, reload }: { state: 
     <div className="hostedpage">
       <aside className="sql-side">
         {admin && <div className="row gap-2">
-          <button className="btn primary sm grow" onClick={create}>+ New database</button>
+          <button className="btn primary sm grow" onClick={create}>+ New project</button>
           <a className="btn sm grow" href="/#connect">Connect existing</a>
         </div>}
-        <h4>{list.length} database{list.length === 1 ? "" : "s"}</h4>
+        <h4>{projects.length} project{projects.length === 1 ? "" : "s"}</h4>
         <ul className="sql-list">
-          {list.map((d) => (
-            <li key={d.id} className={`saved ${d.id === db?.id ? "on" : ""} ${d.parentId ? "branch-item" : ""}`}>
-              <button className="sql-item" onClick={() => go(d.id)}>
-                <span className="ellipsis">{d.parentId ? <><span className="faint">↳ </span>{d.branch}</> : d.name}</span>
-                <span className="faint">{d.parentId ? `branch · ${size(d.sizeBytes)}` : d.kind === "hosted" ? `hosted · ${size(d.sizeBytes)}` : "connected"}{d.status !== "ready" ? ` · ${d.status}` : ""}{d.metrics ? ` · ${d.metrics} metric${d.metrics > 1 ? "s" : ""}` : ""}</span>
-              </button>
+          {projects.map((pr) => (
+            <li key={pr.id} className="proj">
+              <div className="proj-name ellipsis">{pr.name}</div>
+              {pr.branches.map((d) => (
+                <button key={d.id} className={`sql-item ${d.id === db?.id ? "on" : ""}`} onClick={() => go(d.id)}>
+                  <span className="row"><span className="ellipsis">{d.branch}</span><EnvBadge environment={d.environment} /></span>
+                  <span className="faint">{d.kind === "hosted" ? "hosted" : "connected"}{d.kind === "hosted" ? ` · ${size(d.sizeBytes)}` : ""}{d.status !== "ready" ? ` · ${d.status === "provisioning" && d.parentId ? "copying" : d.status}` : ""}{d.metrics ? ` · ${d.metrics} metric${d.metrics > 1 ? "s" : ""}` : ""}</span>
+                </button>
+              ))}
             </li>
           ))}
         </ul>
@@ -80,25 +81,37 @@ export function Databases({ state, selected, server, notify, reload }: { state: 
 
       <main className="hosted-main">
         {srv ? <ServerDetail key={srv.id} server={srv} notify={notify} onChanged={() => changed()} />
-          : db ? <Detail key={db.id} db={db} all={state.sources} server={servers.find((v) => v.id === db.serverId) ?? null} admin={admin} notify={notify} onChanged={changed} /> : (
+          : db ? <ProjectView key={db.id} db={db} all={state.sources} server={servers.find((v) => v.id === db.serverId) ?? null} admin={admin} notify={notify} onChanged={changed} /> : (
           <div className="hosted-empty">
-            <h1 className="title">Your databases</h1>
-            <p className="meaning">Connect a database you already have, or create a new one for an app — and let Crema find and certify its metrics.</p>
-            <div className="row gap-3"><a className="btn primary lg" href="/#connect">Connect a database</a>{admin && <button className="btn lg" onClick={create}>Create a new one</button>}</div>
+            <h1 className="title">Your projects</h1>
+            <p className="meaning">Connect a database you already have, or create a new project for an app — and let Crema find and certify its metrics.</p>
+            <div className="row gap-3"><a className="btn primary lg" href="/#connect">Connect a database</a>{admin && <button className="btn lg" onClick={create}>New project</button>}</div>
           </div>
         )}
       </main>
 
-      {creating && <NewDatabase servers={servers} notify={notify} onClose={() => setCreating(false)} onCreated={(id) => { setCreating(false); changed(id); }} />}
+      {creating && <NewProject servers={servers} notify={notify} onClose={() => setCreating(false)} onCreated={(id) => { setCreating(false); changed(id); }} />}
       {adding && <AddServer notify={notify} onClose={() => setAdding(false)} onAdded={async (id) => { setAdding(false); await reload(); goServer(id); }} />}
     </div>
   );
 }
 
-function NewDatabase({ servers, notify, onClose, onCreated }: { servers: ServerInfo[]; notify: (t: string, e?: boolean) => void; onClose: () => void; onCreated: (id: number) => void }) {
+/** Projects with their branches: production first, then the rest in the order they were made. */
+function groupProjects(sources: SourceInfo[]) {
+  const by = new Map<number, { id: number; name: string; branches: SourceInfo[] }>();
+  for (const d of sources) {
+    const p = by.get(d.projectId) ?? { id: d.projectId, name: d.projectName, branches: [] };
+    p.branches.push(d); by.set(d.projectId, p);
+  }
+  for (const p of by.values()) p.branches.sort((a, b) => Number(!!a.parentId) - Number(!!b.parentId) || a.id - b.id);
+  return [...by.values()];
+}
+
+function NewProject({ servers, notify, onClose, onCreated }: { servers: ServerInfo[]; notify: (t: string, e?: boolean) => void; onClose: () => void; onCreated: (id: number) => void }) {
   const [name, setName] = useState("");
   const [generated, setGenerated] = useState(naturalDbName); // Neon-style: young_art_a7k2
   const [custom, setCustom] = useState<string | null>(null); // the database name, once someone edits it
+  const [withDev, setWithDev] = useState(true);
   const [serverId, setServerId] = useState(servers[0]?.id ?? 0);
   const [check, setCheck] = useState<{ db: string; ok: boolean; reason: string | null } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -119,26 +132,29 @@ function NewDatabase({ servers, notify, onClose, onCreated }: { servers: ServerI
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setBusy(true);
-    try { const r = await api<{ source: { id: number; dbName: string } }>("/api/sources", { body: { kind: "hosted", name, dbName, serverId: serverId || null }, source: null }); notify(`${r.source.dbName} is ready.`); onCreated(r.source.id); }
-    catch (err) { notify((err as Error).message, true); setBusy(false); }
+    try {
+      const r = await api<{ source: { id: number } }>("/api/sources", { body: { kind: "hosted", name, dbName, serverId: serverId || null, withDevelopment: withDev }, source: null });
+      notify(`${name.trim()} is ready${withDev ? ", with a development branch" : ""}.`); onCreated(r.source.id);
+    } catch (err) { notify((err as Error).message, true); setBusy(false); }
   };
   return (
     <Modal onClose={onClose}>
       <form className="stack" onSubmit={submit}>
-        <h2 className="schema-h m-0">New database</h2>
+        <h2 className="schema-h m-0">New project</h2>
         <label className="field">Name<input className="input" autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="ComicAI" maxLength={80} required /></label>
         {custom === null ? (
-          <p className="use-note m-0 row gap-2">Database <span className="mono">{dbName}</span>
+          <p className="use-note m-0 row gap-2">Production database <span className="mono">{dbName}</span>
             <button type="button" className="btn ghost sm" title="Another random name" aria-label="Shuffle" onClick={() => setGenerated(naturalDbName())}>↻</button>
             <button type="button" className="btn ghost sm" onClick={() => setCustom(dbName)}>Edit</button></p>
         ) : (
-          <label className="field">Database name<input className="input mono" value={custom} onChange={(e) => setCustom(e.target.value.toLowerCase())} maxLength={DB_NAME_MAX} spellCheck={false} aria-invalid={!!status} /></label>
+          <label className="field">Production database name<input className="input mono" value={custom} onChange={(e) => setCustom(e.target.value.toLowerCase())} maxLength={DB_NAME_MAX} spellCheck={false} aria-invalid={!!status} /></label>
         )}
-        {status ? <p className="small text-warn m-0">{status}</p> : dbName && <p className="use-note m-0">Logins <span className="mono">{dbName}_owner</span> for your app and <span className="mono">{dbName}_crema</span> (read-only) for Crema. The database name can’t change later; the display name can.</p>}
+        {status ? <p className="small text-warn m-0">{status}</p> : dbName && <p className="use-note m-0">Logins <span className="mono">{dbName}_owner</span> for your app and <span className="mono">{dbName}_crema</span> (read-only) for Crema. The database name can’t change later; the project name can.</p>}
+        <label className="row gap-2 small"><input type="checkbox" checked={withDev} onChange={(e) => setWithDev(e.target.checked)} /> Also create a development branch <span className="faint">(starts empty, like production)</span></label>
         {servers.length > 1 && <label className="field">Server<select className="select" value={serverId} onChange={(e) => setServerId(Number(e.target.value))}>
           {servers.map((v) => <option key={v.id} value={v.id}>{v.name} · {v.publicHost}</option>)}
         </select></label>}
-        <div className="row"><span className="grow" /><button type="button" className="btn" onClick={onClose}>Cancel</button><button className="btn primary" disabled={busy || !name.trim() || !dbName || !!status}>{busy ? <span className="spin" /> : "Create database"}</button></div>
+        <div className="row"><span className="grow" /><button type="button" className="btn" onClick={onClose}>Cancel</button><button className="btn primary" disabled={busy || !name.trim() || !dbName || !!status}>{busy ? <span className="spin" /> : "Create project"}</button></div>
       </form>
     </Modal>
   );
@@ -217,24 +233,29 @@ function ServerDetail({ server, notify, onChanged }: { server: ServerInfo; notif
   );
 }
 
-function Detail({ db, all, server, admin, notify, onChanged }: { db: SourceInfo; all: SourceInfo[]; server: ServerInfo | null; admin: boolean; notify: (t: string, e?: boolean) => void; onChanged: (id?: number) => void }) {
+function ProjectView({ db, all, server, admin, notify, onChanged }: { db: SourceInfo; all: SourceInfo[]; server: ServerInfo | null; admin: boolean; notify: (t: string, e?: boolean) => void; onChanged: (id?: number) => void }) {
   const [role, setRole] = useState<Role>("owner");
   const [format, setFormat] = useState("url");
   const [reveal, setReveal] = useState(false);
   const [conn, setConn] = useState<Conn | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [branching, setBranching] = useState(false);
+  const [renaming, setRenaming] = useState(false);
   const hosted = db.kind === "hosted";
+  const siblings = all.filter((d) => d.projectId === db.projectId).sort((a, b) => Number(!!a.parentId) - Number(!!b.parentId) || a.id - b.id);
+  const main = siblings.find((d) => !d.parentId) ?? db;
   const parent = db.parentId ? all.find((d) => d.id === db.parentId) ?? null : null;
-  const branches = all.filter((d) => d.parentId === db.id);
+  const children = all.filter((d) => d.parentId === db.id);
   // a branch being copied (by the worker) finishes on its own: look again until it does
-  const copying = db.status === "provisioning" || branches.some((b) => b.status === "provisioning");
+  const copying = siblings.some((b) => b.status === "provisioning");
   useEffect(() => {
     if (!copying) return;
     const t = setInterval(() => onChanged(db.id), 3000);
     return () => clearInterval(t);
   }, [copying, db.id, onChanged]);
   const ready = db.status === "ready" && !db.missing;
+  const prod = db.environment === "production";
 
   const fetchConn = useCallback(async () => {
     if (!hosted || !ready || !admin) return;
@@ -248,29 +269,59 @@ function Detail({ db, all, server, admin, notify, onChanged }: { db: SourceInfo;
     try { await fn(); } catch (e) { notify((e as Error).message, true); } finally { setBusy(null); }
   };
   const [ask, confirmDialog] = useConfirm();
+  const where = prod ? "production" : db.branch;
   const reset = async () => {
     const who = role === "owner" ? "app" : "Crema read-only";
-    if (!(await ask({ title: `New password for the ${who} login?`, body: <>Login <span className="mono">{db.dbName}_{role === "owner" ? "owner" : "crema"}</span>. Anything using the old password loses access now.</>, confirmLabel: "Issue new password", danger: true })).ok) return;
+    if (!(await ask({ title: `New password for the ${who} login of ${where}?`, body: <>Login <span className="mono">{db.dbName}_{role === "owner" ? "owner" : "crema"}</span>. Anything using the old password loses access now.</>, confirmLabel: "Issue new password", danger: true })).ok) return;
     act("reset", async () => { setConn(await api<Conn>(`/api/sources/${db.id}/reset-password`, { body: { role }, source: null })); setReveal(true); notify("New password issued."); });
   };
   const resetBranch = async () => {
-    if (!(await ask({ title: `Reset ${db.branch} from ${parent?.name}?`, body: `Everything changed in this branch is lost, and ${parent?.name} is copied again. Its logins stay the same.`, type: db.branch!, confirmLabel: "Reset branch", danger: true })).ok) return;
-    act("resetb", async () => { await api(`/api/sources/${db.id}/reset`, { body: {}, source: null }); notify(`Copying ${parent?.name} into ${db.branch}…`); onChanged(db.id); });
+    if (!(await ask({ title: `Reset ${db.branch} from ${parent?.branch}?`, body: `Everything changed in ${db.branch} is lost, and ${parent?.branch} is copied again. Its logins stay the same. ${parent?.branch === "production" ? "Production itself isn’t touched." : ""}`, type: db.branch, confirmLabel: "Reset branch", danger: true })).ok) return;
+    act("resetb", async () => { await api(`/api/sources/${db.id}/reset`, { body: {}, source: null }); notify(`Copying ${parent?.branch} into ${db.branch}…`); onChanged(db.id); });
   };
   const retry = () => act("retry", async () => { await api(`/api/sources/${db.id}/retry`, { body: {}, source: null }); notify(`${db.dbName} is ready.`); onChanged(db.id); });
+  const setEnv = (environment: string) => act("env", async () => { await api(`/api/sources/${db.id}/environment`, { body: { environment: environment || null }, source: null }); onChanged(db.id); });
   const remove = async () => {
     const name = hosted ? db.dbName! : db.slug;
+    const last = siblings.length === 1;
     const ok = (await ask(hosted
-      ? { title: parent ? `Delete branch ${db.branch}?` : `Delete ${name}?`, body: "Drops the database with all its data and both logins. This can't be undone.", type: name, confirmLabel: parent ? "Delete branch" : "Delete database", danger: true }
+      ? { title: parent ? `Delete the ${db.branch} branch?` : `Delete ${last ? `the project ${db.projectName}` : "production"}?`, body: <>{prod ? <b>This is the production database. </b> : null}Drops <span className="mono">{name}</span> with all its data and both logins. This can’t be undone.</>, type: name, confirmLabel: parent ? "Delete branch" : last ? "Delete project" : "Delete production", danger: true }
       : { title: `Remove ${db.name} from Crema?`, body: "Its certified metrics stop being served. The database itself isn't touched.", type: name, confirmLabel: "Remove", danger: true })).ok;
     if (!ok) return;
-    act("delete", async () => { await api(`/api/sources/${db.id}/delete`, { body: {}, source: null }); notify(hosted ? `Deleted ${name}.` : `Removed ${db.name}.`); onChanged(); });
+    act("delete", async () => { await api(`/api/sources/${db.id}/delete`, { body: {}, source: null }); notify(hosted ? `Deleted ${name}.` : `Removed ${db.name}.`); onChanged(siblings.find((x) => x.id !== db.id)?.id); });
   };
+
+  const header = (
+    <>
+      <div className="eyebrow">{hosted ? "Hosted project" : "Connected database"}</div>
+      <div className="project-head"><h1 className="title">{db.projectName}</h1>{admin && <button className="btn ghost sm" onClick={() => setRenaming(true)} title="Rename the project (database names never change)">Rename</button>}</div>
+      <nav className="branch-tabs" aria-label="Branches">
+        {siblings.map((d) => <a key={d.id} href={`#databases/${d.id}`} className={d.id === db.id ? "on" : ""} aria-current={d.id === db.id ? "page" : undefined}>{d.branch}<EnvBadge environment={d.environment} /></a>)}
+        {admin && hosted && main.status === "ready" && <button type="button" onClick={() => setBranching(true)}>+ Branch</button>}
+      </nav>
+      {ready && <nav className="section-links" aria-label="Section">
+        <a href={`#databases/${db.id}`} className="on" aria-current="page">Connect</a>
+        <a href={sourceHref(db.slug, "tables")}>Tables</a>
+        <a href={sourceHref(db.slug, "sql")}>SQL editor</a>
+        <a href={sourceHref(db.slug, "schema")}>Schema</a>
+        <a href={sourceHref(db.slug)}>Metrics</a>
+      </nav>}
+    </>
+  );
+  const modals = (
+    <>
+      {confirmDialog}
+      {renaming && <RenameProject db={db} notify={notify} onClose={() => setRenaming(false)} onDone={() => { setRenaming(false); onChanged(db.id); }} />}
+      {branching && <NewBranch main={main} taken={siblings.map((b) => b.branch)} notify={notify} onClose={() => setBranching(false)} onCreated={(id) => { setBranching(false); onChanged(id); }} />}
+    </>
+  );
+  const cremaNote = db.environment === "development"
+    ? "Crema doesn’t analyse development on its own (no automatic discovery or drift checks) and consumers read production by default. Open it to look around or analyse on demand."
+    : `Crema analyses it with the read-only login${db.metrics ? `: ${db.metrics} certified metric${db.metrics > 1 ? "s" : ""}` : ""}.`;
 
   if (!hosted) return (
     <div className="hosted-detail">
-      <div className="eyebrow">Connected database</div>
-      <h1 className="title">{db.name}</h1>
+      {header}
       <div className="hosted-stats">
         <div><span>In Crema</span><b className="mono">{db.slug}</b></div>
         <div><span>Metrics</span><b>{db.metrics}{db.attention ? ` · ${db.attention} need attention` : ""}</b></div>
@@ -278,13 +329,21 @@ function Detail({ db, all, server, admin, notify, onChanged }: { db: SourceInfo;
         <div><span>Added</span><b>{ago(db.createdAt)}</b><small>by {db.createdBy}</small></div>
       </div>
       <section className="hosted-card">
+        <div className="hosted-card-head"><h2>Environment</h2><span className="grow" />
+          {admin ? <select className="select sm" value={db.environment ?? ""} disabled={busy === "env"} onChange={(e) => setEnv(e.target.value)} aria-label="Environment">
+            <option value="">Not set</option><option value="production">Production</option><option value="staging">Staging</option><option value="development">Development</option>
+          </select> : <EnvBadge environment={db.environment} />}
+        </div>
+        <p className="m-0 muted">A label for people; Crema reads it the same way whatever you choose. Development isn’t checked on a schedule and isn’t offered to consumers by default.</p>
+      </section>
+      <section className="hosted-card">
         <div className="row"><p className="m-0 grow muted">Crema reads it in read-only transactions with the connection string you gave; it’s stored encrypted.</p><a className="btn primary" href={sourceHref(db.slug)}>Open</a></div>
       </section>
       {admin && <section className="hosted-card danger">
         <div className="hosted-card-head"><h2>Danger zone</h2></div>
         <div className="row"><div className="grow"><b>Remove from Crema</b><div className="small muted">Forgets the connection. Its metrics stop being served; history stays in the audit log. The database isn’t touched.</div></div><button className="btn text-fail" disabled={busy === "delete"} onClick={remove}>Remove</button></div>
       </section>}
-      {confirmDialog}
+      {modals}
     </div>
   );
 
@@ -294,9 +353,8 @@ function Detail({ db, all, server, admin, notify, onChanged }: { db: SourceInfo;
 
   return (
     <div className="hosted-detail">
-      <div className="eyebrow">{parent ? <>Branch <span className="mono">{db.branch}</span> of <a href={`#databases/${parent.id}`}>{parent.name}</a></> : branches.length ? "Hosted database · main" : "Hosted database"}</div>
-      <h1 className="title">{parent ? `${db.name} · ${db.branch}` : db.name}</h1>
-      {db.status === "provisioning" && <div className="callout small row"><span className="grow">{parent ? `Copying ${db.branchCopy === "schema" ? "the schema" : "schema and data"} from ${parent.name}… this takes as long as the copy does.` : "Being created…"}</span>{admin && Date.now() - Date.parse(db.createdAt) > 120_000 && <button className="btn sm" disabled={busy === "retry"} onClick={retry}>Taking long? Retry</button>}</div>}
+      {header}
+      {db.status === "provisioning" && <div className="callout small row"><span className="grow">{parent ? `Copying ${db.branchCopy === "schema" ? "the schema" : "schema and data"} from ${parent.branch}… this takes as long as the copy does.` : "Being created…"}</span>{admin && Date.now() - Date.parse(db.createdAt) > 120_000 && <button className="btn sm" disabled={busy === "retry"} onClick={retry}>Taking long? Retry</button>}</div>}
       {db.status === "failed" && <div className="callout warn small row"><span className="grow">{parent ? "Copying it failed" : "Creating it failed"}: {db.error}</span>{admin && <button className="btn sm" disabled={busy === "retry"} onClick={retry}>Retry</button>}</div>}
       <div className="hosted-stats">
         <div><span>Database</span><b className="mono">{db.dbName}</b><small>on {server?.name ?? "a removed server"}</small></div>
@@ -332,72 +390,77 @@ function Detail({ db, all, server, admin, notify, onChanged }: { db: SourceInfo;
         {role === "reader" && <p className="use-note m-0">Read-only: this login can’t change anything, including tables your app creates later.</p>}
       </section>}
 
-      {!parent && db.status === "ready" && <Branches main={db} branches={branches} admin={admin} notify={notify} onChanged={onChanged} />}
       {parent && <section className="hosted-card">
-        <div className="hosted-card-head"><h2>Copied from {parent.name}</h2></div>
-        <p className="m-0 muted">{db.branchCopy === "schema" ? "Schema only" : "Schema and data"}{db.branchedAt ? `, ${ago(db.branchedAt)}` : ""}. Changes here never reach {parent.name}. Point your app’s development setup at this branch, and turn off what reaches real people there (messages, webhooks, payments, scheduled jobs): a separate database doesn’t stop the app from contacting real customers.</p>
-        {admin && <div className="row"><div className="grow"><b>Reset from {parent.name}</b><div className="small muted">Throws away everything in this branch and copies {parent.name} again. Its logins stay the same.</div></div><button className="btn" disabled={busy === "resetb" || db.status === "provisioning"} onClick={resetBranch}>Reset</button></div>}
+        <div className="hosted-card-head"><h2>Copied from {parent.branch}</h2></div>
+        <p className="m-0 muted">{db.branchCopy === "schema" ? "Schema only" : "Schema and data"}{db.branchedAt ? `, ${ago(db.branchedAt)}` : ""}. Changes here never reach {parent.branch}. Point your app’s {db.environment === "staging" ? "staging" : "development"} setup at this branch, and turn off what reaches real people there (messages, webhooks, payments, scheduled jobs): a separate database doesn’t stop the app from contacting real customers.</p>
+        {admin && <div className="row"><div className="grow"><b>Reset from {parent.branch}</b><div className="small muted">Throws away everything in this branch and copies {parent.branch} again. Its logins stay the same.</div></div><button className="btn" disabled={busy === "resetb" || db.status === "provisioning"} onClick={resetBranch}>Reset</button></div>}
       </section>}
 
       {ready && <section className="hosted-card">
         <div className="hosted-card-head"><h2>Crema</h2></div>
-        <div className="row"><p className="m-0 grow muted">Crema analyses it with the read-only login{db.metrics ? `: ${db.metrics} certified metric${db.metrics > 1 ? "s" : ""}` : ""}.</p><a className="btn primary" href={sourceHref(db.slug)}>Open</a></div>
+        <div className="row"><p className="m-0 grow muted">{cremaNote}</p><a className="btn primary" href={sourceHref(db.slug)}>Open</a></div>
       </section>}
 
       {admin && <section className="hosted-card danger">
         <div className="hosted-card-head"><h2>Danger zone</h2></div>
         {ready && <div className="row"><div className="grow"><b>Reset password</b><div className="small muted">Issues a new password for the selected login. The old one stops working at once.</div></div><button className="btn" disabled={busy === "reset"} onClick={reset}>Reset password</button></div>}
-        <div className="row"><div className="grow"><b>{parent ? "Delete branch" : "Delete database"}</b><div className="small muted">{branches.length ? `Delete its branches first (${branches.map((b) => b.branch).join(", ")}).` : "Drops the database, its data and both logins. Its metrics stop being served."}</div></div><button className="btn text-fail" disabled={busy === "delete" || branches.length > 0} onClick={remove}>Delete</button></div>
+        <div className="row"><div className="grow"><b>{parent ? "Delete branch" : siblings.length === 1 ? "Delete project" : "Delete production"}</b><div className="small muted">{children.length || siblings.length > 1 && !parent ? `Delete its branches first (${siblings.filter((b) => b.parentId).map((b) => b.branch).join(", ")}).` : "Drops the database, its data and both logins. Its metrics stop being served."}</div></div><button className="btn text-fail" disabled={busy === "delete" || (!parent && siblings.length > 1)} onClick={remove}>Delete</button></div>
       </section>}
-      {confirmDialog}
+      {modals}
     </div>
   );
 }
 
-/** A project's branches: copies of its main database, each with its own database and logins. */
-function Branches({ main, branches, admin, notify, onChanged }: { main: SourceInfo; branches: SourceInfo[]; admin: boolean; notify: (t: string, e?: boolean) => void; onChanged: (id?: number) => void }) {
-  const [creating, setCreating] = useState(false);
-  return (
-    <section className="hosted-card">
-      <div className="hosted-card-head"><h2>Branches</h2><span className="grow" />{admin && <button className="btn sm" onClick={() => setCreating(true)}>New branch</button>}</div>
-      {!branches.length ? <p className="m-0 muted">A branch is a copy of this database for development: change it, run migrations on it, reset it, without touching {main.name}. Each one is its own database with its own logins.</p> : (
-        <ul className="branch-list">
-          <li><span className="mono">main</span><span className="faint">this database · production</span></li>
-          {branches.map((b) => (
-            <li key={b.id}>
-              <a className="mono" href={`#databases/${b.id}`}>{b.branch}</a>
-              <span className="faint">{b.status === "provisioning" ? "copying…" : b.status === "failed" ? "copy failed" : `${b.branchCopy === "schema" ? "schema only" : "schema + data"}${b.branchedAt ? `, copied ${ago(b.branchedAt)}` : ""}`} · {size(b.sizeBytes)}</span>
-            </li>
-          ))}
-        </ul>
-      )}
-      {creating && <NewBranch main={main} taken={branches.map((b) => b.branch!)} notify={notify} onClose={() => setCreating(false)} onCreated={(id) => { setCreating(false); onChanged(id); }} />}
-    </section>
-  );
-}
-
-function NewBranch({ main, taken, notify, onClose, onCreated }: { main: SourceInfo; taken: string[]; notify: (t: string, e?: boolean) => void; onClose: () => void; onCreated: (id: number) => void }) {
-  const [branch, setBranch] = useState(taken.includes("dev") ? "" : "dev");
-  const [copy, setCopy] = useState<"data" | "schema">("data");
+function RenameProject({ db, notify, onClose, onDone }: { db: SourceInfo; notify: (t: string, e?: boolean) => void; onClose: () => void; onDone: () => void }) {
+  const [name, setName] = useState(db.projectName);
   const [busy, setBusy] = useState(false);
-  const problem = !branch ? null : !/^[a-z][a-z0-9_]{0,15}$/.test(branch) || branch === "main" ? "A short word: lowercase letters, digits, underscores (not “main”)." : taken.includes(branch) ? `There is already a “${branch}” branch.` : null;
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setBusy(true);
-    try { const r = await api<{ id: number }>(`/api/sources/${main.id}/branch`, { body: { branch, copy }, source: null }); notify(`Copying ${main.name} into ${branch}…`); onCreated(r.id); }
+    try { await api(`/api/sources/${db.id}/rename`, { body: { name }, source: null }); notify("Renamed."); onDone(); }
     catch (err) { notify((err as Error).message, true); setBusy(false); }
   };
   return (
     <Modal onClose={onClose}>
       <form className="stack" onSubmit={submit}>
-        <h2 className="schema-h m-0">New branch of {main.name}</h2>
-        <label className="field">Branch name<input className="input mono" autoFocus value={branch} onChange={(e) => setBranch(e.target.value.toLowerCase())} maxLength={16} spellCheck={false} /></label>
-        {problem ? <p className="small text-warn m-0">{problem}</p> : branch && <p className="use-note m-0">Database <span className="mono">{main.dbName}_{branch}</span>, logins <span className="mono">{main.dbName}_{branch}_owner</span> and <span className="mono">{main.dbName}_{branch}_crema</span>.</p>}
-        <div className="round-pills" role="tablist">
-          <button type="button" role="tab" aria-selected={copy === "data"} className={copy === "data" ? "on" : ""} onClick={() => setCopy("data")}>Schema + data</button>
-          <button type="button" role="tab" aria-selected={copy === "schema"} className={copy === "schema" ? "on" : ""} onClick={() => setCopy("schema")}>Schema only</button>
+        <h2 className="schema-h m-0">Rename project</h2>
+        <label className="field">Name<input className="input" autoFocus value={name} onChange={(e) => setName(e.target.value)} maxLength={80} required /></label>
+        <p className="use-note m-0">Only what people see changes. Database names, logins and connection strings stay exactly as they are.</p>
+        <div className="row"><span className="grow" /><button type="button" className="btn" onClick={onClose}>Cancel</button><button className="btn primary" disabled={busy || !name.trim() || name.trim() === db.projectName}>{busy ? <span className="spin" /> : "Rename"}</button></div>
+      </form>
+    </Modal>
+  );
+}
+
+function NewBranch({ main, taken, notify, onClose, onCreated }: { main: SourceInfo; taken: string[]; notify: (t: string, e?: boolean) => void; onClose: () => void; onCreated: (id: number) => void }) {
+  const [environment, setEnvironment] = useState<"development" | "staging">("development");
+  const [branch, setBranch] = useState(taken.includes("development") ? "" : "development");
+  const [copy, setCopy] = useState<"data" | "schema">("schema");
+  const [busy, setBusy] = useState(false);
+  const pick = (e: "development" | "staging") => { if (!branch || branch === environment) setBranch(taken.includes(e) ? "" : e); setEnvironment(e); };
+  const problem = !branch ? null : !/^[a-z][a-z0-9_]{0,15}$/.test(branch) || branch === "main" || branch === "production" ? "A short word: lowercase letters, digits, underscores (not “production”)." : taken.includes(branch) ? `There is already a “${branch}” branch.` : null;
+  const dbName = branch ? `${main.dbName!.slice(0, DB_NAME_MAX - 1 - branch.length).replace(/_+$/, "")}_${branch}` : "";
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    try { const r = await api<{ id: number }>(`/api/sources/${main.id}/branch`, { body: { branch, environment, copy }, source: null }); notify(`Copying production into ${branch}…`); onCreated(r.id); }
+    catch (err) { notify((err as Error).message, true); setBusy(false); }
+  };
+  return (
+    <Modal onClose={onClose}>
+      <form className="stack" onSubmit={submit}>
+        <h2 className="schema-h m-0">New branch of {main.projectName}</h2>
+        <div className="round-pills" role="tablist" aria-label="Environment">
+          <button type="button" role="tab" aria-selected={environment === "development"} className={environment === "development" ? "on" : ""} onClick={() => pick("development")}>Development</button>
+          <button type="button" role="tab" aria-selected={environment === "staging"} className={environment === "staging" ? "on" : ""} onClick={() => pick("staging")}>Staging</button>
         </div>
-        <p className="use-note m-0">{copy === "data" ? `A consistent snapshot of ${main.name} as it is when the copy starts; ${main.name} keeps serving meanwhile. It's a real copy: it takes time and disk in proportion to ${main.name}'s size.` : `The tables, views and functions of ${main.name}, without its rows: quick, and no customer data in development.`}</p>
+        <label className="field">Branch name<input className="input mono" autoFocus value={branch} onChange={(e) => setBranch(e.target.value.toLowerCase())} maxLength={16} spellCheck={false} /></label>
+        {problem ? <p className="small text-warn m-0">{problem}</p> : branch && <p className="use-note m-0">Database <span className="mono">{dbName}</span>, logins <span className="mono">{dbName}_owner</span> and <span className="mono">{dbName}_crema</span>.</p>}
+        <div className="round-pills" role="tablist" aria-label="What to copy">
+          <button type="button" role="tab" aria-selected={copy === "schema"} className={copy === "schema" ? "on" : ""} onClick={() => setCopy("schema")}>Schema only</button>
+          <button type="button" role="tab" aria-selected={copy === "data"} className={copy === "data" ? "on" : ""} onClick={() => setCopy("data")}>Schema + data</button>
+        </div>
+        <p className="use-note m-0">{copy === "data" ? `A consistent snapshot of production as it is when the copy starts; production keeps serving meanwhile. It's a real copy: it takes time and disk in proportion to production's size, and it puts customer data in ${environment}.` : "The tables, views and functions of production, without its rows: quick, and no customer data in development."}</p>
         <div className="row"><span className="grow" /><button type="button" className="btn" onClick={onClose}>Cancel</button><button className="btn primary" disabled={busy || !branch || !!problem}>{busy ? <span className="spin" /> : "Create branch"}</button></div>
       </form>
     </Modal>

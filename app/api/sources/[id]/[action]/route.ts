@@ -14,7 +14,9 @@ export const POST = handle(({ r, body, actor }) => {
   switch (body.action) {
     case "reset-password": return r.resetHostedPassword(id, actor, body.role === "reader" ? "reader" : "owner");
     case "retry": return r.retryHosted(id, actor);
-    case "branch": return r.createBranch(id, { branch: body.branch ?? null, copy: body.copy ?? null }, actor);
+    case "branch": return r.createBranch(id, { branch: body.branch ?? null, environment: body.environment ?? null, copy: body.copy ?? null }, actor);
+    case "rename": return r.renameProject(id, String(body.name ?? ""), actor);
+    case "environment": return r.setEnvironment(id, body.environment ?? null, actor);
     case "reset": return r.resetBranch(id, actor, body.copy ?? null);
     case "delete": return r.removeSource(id, actor);
     default: throw new CremaError("Unknown action.", 404);

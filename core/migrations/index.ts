@@ -7,6 +7,7 @@ import m003 from "./003_servers";
 import m004 from "./004_provision_token";
 import m005 from "./005_branches";
 import m006 from "./006_branch_operations";
+import m007 from "./007_projects";
 
 export const MIGRATIONS: { id: string; sql: string }[] = [
   { id: "001_init", sql: m001 },
@@ -15,4 +16,5 @@ export const MIGRATIONS: { id: string; sql: string }[] = [
   { id: "004_provision_token", sql: m004 },
   { id: "005_branches", sql: m005 },
   { id: "006_branch_operations", sql: m006 },
+  { id: "007_projects", sql: m007 },
 ];

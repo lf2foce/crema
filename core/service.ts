@@ -5,7 +5,7 @@
 //   - Everything analytical belongs to one source. A metric runs on the source it was certified on,
 //     never on "whatever is connected", and is not served while its tables have drifted.
 import { randomUUID } from "node:crypto";
-import { dbNameProblem, naturalDbName } from "../lib/dbName";
+import { DB_NAME_MAX, dbNameProblem, naturalDbName } from "../lib/dbName";
 import { compare } from "./compare";
 import { ExploreError, runSql, tableRows } from "./explore";
 import { currentCurrency, display, fmt } from "./format";
@@ -15,7 +15,7 @@ import { propose, repair } from "./propose";
 import { DEFAULT_WORKSPACE, implId, Registry, registry } from "./registry";
 import { introspect, modelPayload, snapshot } from "./schema";
 import { seal, unseal } from "./secret";
-import type { Candidate, CandidateSpec, Concept, Metric, MetricKind, MetricUnit, MetricVersion, SchemaSnapshot, Source, Table, Verification } from "./types";
+import type { Candidate, CandidateSpec, Concept, Environment, Metric, MetricKind, MetricUnit, MetricVersion, SchemaSnapshot, Source, Table, Verification } from "./types";
 import { driftedRelations, fingerprint, pgError, verify, windows } from "./verify";
 import { assertSingleSelect, bind, describeUrl, seriesSql, SqlContractError, Warehouse } from "./warehouse";
 
@@ -90,7 +90,7 @@ export class Crema {
   }
 
   /** Connect a database you already have. Crema reads it in READ ONLY transactions; a read-only role is still advised. */
-  async addExternal(url: string, actor: string, name?: string) {
+  async addExternal(url: string, actor: string, name?: string, environment?: string | null) {
     if (!/^postgres(ql)?:\/\//.test(url)) throw new CremaError("Expected a postgres:// connection string.");
     const wh = new Warehouse(url, 8_000);
     let info: { db: string; usr: string; ro: string; writable: number; tables: number };
@@ -107,6 +107,7 @@ export class Crema {
     const label = (name ?? "").trim() || info.db;
     const source = await this.reg.addSource(this.scope.workspaceId, {
       slug: await this.reg.freeSlug(this.scope.workspaceId, slugify(label)), name: label, kind: "external",
+      environment: toEnvironment(environment),
       connection: seal(url), readOnly: info.ro === "on" || info.writable === 0, writableTables: info.writable,
     }, actor);
     return { source, ...describeUrl(url), tables: info.tables, writableTables: info.writable, readOnlyRole: info.ro === "on" };
@@ -214,7 +215,7 @@ export class Crema {
    * `name` is what people see (and can change later); `dbName` is the database's name on the server,
    * a natural random one (young_art_a7k2) unless given, and fixed for life.
    */
-  async createHosted(name: string, actor: string, serverId?: number | null, dbNameInput?: string | null) {
+  async createHosted(name: string, actor: string, serverId?: number | null, dbNameInput?: string | null, withDevelopment = false) {
     let servers = await this.reg.servers(this.scope.workspaceId);
     // Neon-style: the first database goes on the installation's own server, added on the way
     if (!servers.length && suggestedServer()) { await this.addSuggestedServer(actor); servers = await this.reg.servers(this.scope.workspaceId); }
@@ -238,9 +239,11 @@ export class Crema {
     }
     const source = await this.reg.addSource(this.scope.workspaceId, {
       slug: await this.reg.freeSlug(this.scope.workspaceId, slugify(name)), name: name.trim().slice(0, 80),
-      kind: "hosted", status: "provisioning", dbName, readOnly: true, serverId: server.id,
+      kind: "hosted", status: "provisioning", dbName, readOnly: true, serverId: server.id, environment: "production",
     }, actor);
     await this.provision(h, source, actor);
+    // a development branch alongside, if asked: schema only, so nothing is copied that nobody chose (a new database is empty anyway)
+    if (withDevelopment) await this.createBranch(source.id, { branch: "development", environment: "development", copy: "schema" }, actor);
     return (await this.reg.source(this.scope.workspaceId, source.id))!;
   }
 
@@ -295,33 +298,52 @@ export class Crema {
    * logins, fewer connections), filled by the worker with a consistent snapshot of main, schema and
    * data or schema only. Not instant and not copy-on-write: it copies.
    */
-  async createBranch(parentId: number, input: { branch?: string | null; copy?: string | null }, actor: string) {
+  async createBranch(parentId: number, input: { branch?: string | null; environment?: string | null; copy?: string | null }, actor: string) {
     return this.branchLock(parentId, () => this.createBranchLocked(parentId, input, actor));
   }
 
-  private async createBranchLocked(parentId: number, input: { branch?: string | null; copy?: string | null }, actor: string) {
+  private async createBranchLocked(parentId: number, input: { branch?: string | null; environment?: string | null; copy?: string | null }, actor: string) {
     const parent = await this.reg.source(this.scope.workspaceId, parentId);
     if (!parent || parent.kind !== "hosted" || !parent.dbName) throw new CremaError("Hosted database not found.", 404);
-    if (parent.parentId) throw new CremaError("Branch from the project's main database.", 400);
+    if (parent.parentId) throw new CremaError("Branch from the project's production database.", 400);
     if (parent.status !== "ready") throw new CremaError(`${parent.name} isn’t ready yet.`, 409);
-    const branch = (input.branch ?? "dev").trim().toLowerCase();
-    if (!/^[a-z][a-z0-9_]{0,15}$/.test(branch) || branch === "main") throw new CremaError("A branch name is a short word: lowercase letters, digits, underscores (not “main”).");
+    const environment = input.environment === "staging" ? "staging" : "development";
+    const branch = (input.branch ?? "").trim().toLowerCase() || environment;
+    if (!/^[a-z][a-z0-9_]{0,15}$/.test(branch) || branch === "main" || branch === "production") throw new CremaError("A branch name is a short word: lowercase letters, digits, underscores (not “production”).");
     const copy = input.copy === "schema" ? "schema" : "data";
-    const dbName = `${parent.dbName}_${branch}`;
+    const dbName = branchDbName(parent.dbName, branch);
     const problem = dbNameProblem(dbName);
     if (problem) throw new CremaError(`${dbName}: ${problem}`);
-    const siblings = (await this.reg.sources(this.scope.workspaceId)).filter((s) => s.parentId === parent.id);
-    if (siblings.some((s) => s.branch === branch)) throw new CremaError(`${parent.name} already has a “${branch}” branch.`, 409);
+    const siblings = (await this.reg.sources(this.scope.workspaceId)).filter((s) => s.projectId === parent.projectId);
+    if (siblings.some((s) => s.branch === branch)) throw new CremaError(`${parent.projectName} already has a “${branch}” branch.`, 409);
     const h = await this.hostingFor(parent.serverId);
     const taken = await h.taken(dbName).catch((e) => { throw hostingError(e); });
     if (taken.length) throw new CremaError(`“${taken[0]}” already exists on this server.`, 409);
     const source = await this.reg.addSource(this.scope.workspaceId, {
-      slug: await this.reg.freeSlug(this.scope.workspaceId, `${parent.slug}_${branch}`), name: parent.name,
-      kind: "hosted", status: "failed", dbName, readOnly: true, serverId: parent.serverId, parentId: parent.id, branch,
+      slug: await this.reg.freeSlug(this.scope.workspaceId, `${parent.slug}_${branch}`), projectId: parent.projectId, branch, environment,
+      kind: "hosted", status: "failed", dbName, readOnly: true, serverId: parent.serverId, parentId: parent.id,
     }, actor);
     await this.reg.updateSource(source.id, { branchCopy: copy, error: "Copy has not been queued yet. Retry to start it." });
     await this.queueBranchCopy(source, actor, "branch.created");
     return (await this.reg.source(this.scope.workspaceId, source.id))!;
+  }
+
+  /** Say what a connected database is (production, staging, development), or clear the label. Hosted branches get theirs from how they were made. */
+  async setEnvironment(id: number, environment: string | null, actor: string) {
+    const source = await this.reg.source(this.scope.workspaceId, id);
+    if (!source) throw new CremaError("Database not found.", 404);
+    if (source.kind !== "external") throw new CremaError("A hosted branch’s environment comes from how it was made.", 409);
+    await this.reg.updateSource(id, { environment: toEnvironment(environment) });
+    await this.ev(actor, "source.environment_set", `source:${source.slug}`, { environment: toEnvironment(environment) }, source);
+  }
+
+  /** Rename the project a database belongs to. The display name only: database names never change. */
+  async renameProject(sourceId: number, name: string, actor: string) {
+    const source = await this.reg.source(this.scope.workspaceId, sourceId);
+    if (!source) throw new CremaError("Database not found.", 404);
+    const clean = name.trim().slice(0, 80);
+    if (!clean) throw new CremaError("Give the project a name.");
+    await this.reg.renameProject(this.scope.workspaceId, source.projectId, clean, actor);
   }
 
   /** Throw away a branch's changes: drop its database and copy main again. Its logins stay the same. */
@@ -766,8 +788,11 @@ export class Crema {
   // ---------- reuse: certified metrics for software, AI and people ----------
 
   /** Every live metric in the workspace. `ref` ("source/key") addresses it everywhere else. */
-  async listMetrics() {
-    return (await this.reg.workspaceMetrics(this.scope.workspaceId)).map((m) => contract(m, m.sourceSlug));
+  /** Consumers read production by default: metrics certified on development branches are listed only when asked for (or fetched by their ref). */
+  async listMetrics(opts: { includeDevelopment?: boolean } = {}) {
+    return (await this.reg.workspaceMetrics(this.scope.workspaceId))
+      .filter((m) => opts.includeDevelopment || m.sourceEnvironment !== "development")
+      .map((m) => contract(m, m.sourceSlug));
   }
 
   /** Scheduled schema-only checks: no model call and no execution of metric value queries. */
@@ -775,7 +800,7 @@ export class Crema {
     let checked = 0, changed = 0;
     const errors: { source: string; error: string }[] = [];
     for (const source of await this.reg.sources(this.scope.workspaceId)) {
-      if (source.status !== "ready") continue;
+      if (source.status !== "ready" || source.environment === "development") continue; // development isn't scheduled; it's checked when opened
       const metrics = await this.reg.metrics(source.id);
       if (!metrics.length) continue;
       try {
@@ -910,6 +935,13 @@ function suggestedServer(): { url: string; name: string; publicHost: string | nu
   const u = new URL(process.env.DATABASE_URL);
   u.pathname = "/postgres";
   return { url: u.toString(), name: "This machine", publicHost: null, ssl: null };
+}
+
+const toEnvironment = (v?: string | null): Environment | null => (v === "production" || v === "staging" || v === "development" ? v : null);
+
+/** `<main>_<branch>`, the main part shortened when the whole would be too long. */
+function branchDbName(main: string, branch: string) {
+  return `${main.slice(0, DB_NAME_MAX - 1 - branch.length).replace(/_+$/, "")}_${branch}`;
 }
 
 function hostingError(e: unknown): Error {

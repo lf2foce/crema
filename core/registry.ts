@@ -3,7 +3,7 @@
 import type pg from "pg";
 import { database, type Db } from "./db";
 import type {
-  AuditEvent, Candidate, CandidateSpec, Comparison, Concept, ConceptSpec, EntityReading,
+  Environment, AuditEvent, Candidate, CandidateSpec, Comparison, Concept, ConceptSpec, EntityReading,
   Metric, MetricStatus, MetricVersion, Run, RunStep, SavedQuery, Server, Source, Verification,
 } from "./types";
 
@@ -72,19 +72,24 @@ export class Registry {
     return rows.map((r) => ({ id: r.id, at: iso(r.at), actor: r.actor, action: r.action, subject: r.subject, detail: r.detail ?? null }));
   }
 
-  // ---------- sources ----------
+  // ---------- projects and their sources (branches) ----------
+  /** A source with its project's name: the one name people see. */
+  private static SOURCE = `SELECT s.*, p.name AS project_name FROM sources s JOIN projects p ON p.id = s.project_id`;
   private toSource(r: any): Source {
+    const main = !r.parent_id;
     return {
-      id: r.id, workspaceId: r.workspace_id, slug: r.slug, name: r.name, kind: r.kind, status: r.status, error: r.error,
-      readOnly: r.read_only, writableTables: r.writable_tables, dbName: r.db_name, serverId: r.server_id ?? null, parentId: r.parent_id ?? null, branch: r.branch ?? null, branchCopy: r.branch_copy ?? null, branchedAt: r.branched_at ? iso(r.branched_at) : null, createdBy: r.created_by, createdAt: iso(r.created_at),
+      id: r.id, workspaceId: r.workspace_id, slug: r.slug, projectId: r.project_id, projectName: r.project_name,
+      name: main ? r.project_name : `${r.project_name} · ${r.branch}`, environment: r.environment ?? null,
+      kind: r.kind, status: r.status, error: r.error,
+      readOnly: r.read_only, writableTables: r.writable_tables, dbName: r.db_name, serverId: r.server_id ?? null, parentId: r.parent_id ?? null, branch: r.branch, branchCopy: r.branch_copy ?? null, branchedAt: r.branched_at ? iso(r.branched_at) : null, createdBy: r.created_by, createdAt: iso(r.created_at),
     };
   }
   async sources(workspaceId: string): Promise<Source[]> {
-    return (await this.q("SELECT * FROM sources WHERE workspace_id = $1 AND deleted_at IS NULL ORDER BY id", [workspaceId])).map((r) => this.toSource(r));
+    return (await this.q(`${Registry.SOURCE} WHERE s.workspace_id = $1 AND s.deleted_at IS NULL ORDER BY s.project_id, s.id`, [workspaceId])).map((r) => this.toSource(r));
   }
   async source(workspaceId: string, idOrSlug: number | string): Promise<Source | null> {
     const byId = typeof idOrSlug === "number" || /^\d+$/.test(String(idOrSlug));
-    const r = (await this.q(`SELECT * FROM sources WHERE workspace_id = $1 AND deleted_at IS NULL AND ${byId ? "id = $2" : "slug = $2"}`, [workspaceId, byId ? Number(idOrSlug) : idOrSlug]))[0];
+    const r = (await this.q(`${Registry.SOURCE} WHERE s.workspace_id = $1 AND s.deleted_at IS NULL AND ${byId ? "s.id = $2" : "s.slug = $2"}`, [workspaceId, byId ? Number(idOrSlug) : idOrSlug]))[0];
     return r ? this.toSource(r) : null;
   }
   async sourceSecrets(id: number): Promise<SourceSecrets> {
@@ -98,27 +103,50 @@ export class Registry {
     while (taken.has(slug)) slug = `${base}_${++n}`;
     return slug;
   }
-  async addSource(workspaceId: string, s: { slug: string; name: string; kind: Source["kind"]; status?: Source["status"]; connection?: string | null; readOnly?: boolean; writableTables?: number; dbName?: string | null; serverId?: number | null; parentId?: number | null; branch?: string | null }, actor: string): Promise<Source> {
+  /**
+   * A new database. Without `projectId` it starts a project (named `name`) as its production branch;
+   * with one it's another branch of that project.
+   */
+  async addSource(workspaceId: string, s: {
+    slug: string; kind: Source["kind"]; name?: string; projectId?: number; branch?: string; environment?: Environment | null;
+    status?: Source["status"]; connection?: string | null; readOnly?: boolean; writableTables?: number; dbName?: string | null;
+    serverId?: number | null; parentId?: number | null;
+  }, actor: string): Promise<Source> {
     return this.tx(async (c) => {
+      let projectId = s.projectId;
+      if (projectId === undefined) {
+        if (!s.name) throw new Error("A new project needs a name.");
+        projectId = (await c.query("INSERT INTO projects (workspace_id, name, created_by) VALUES ($1, $2, $3) RETURNING id", [workspaceId, s.name, actor])).rows[0].id as number;
+      }
       const r = (await c.query(
-        `INSERT INTO sources (workspace_id, slug, name, kind, status, connection, read_only, writable_tables, db_name, server_id, parent_id, branch, created_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING *`,
-        [workspaceId, s.slug, s.name, s.kind, s.status ?? "ready", s.connection ?? null, s.readOnly ?? false, s.writableTables ?? 0, s.dbName ?? null, s.serverId ?? null, s.parentId ?? null, s.branch ?? null, actor])).rows[0];
-      await this.event({ workspaceId, sourceId: r.id }, actor, `source.${s.kind === "hosted" ? "provisioning" : "connected"}`, `source:${r.slug}`, { name: s.name, dbName: s.dbName ?? null, serverId: s.serverId ?? null }, c);
-      return this.toSource(r);
+        `INSERT INTO sources (workspace_id, project_id, slug, branch, environment, kind, status, connection, read_only, writable_tables, db_name, server_id, parent_id, created_by)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING id`,
+        [workspaceId, projectId, s.slug, s.branch ?? s.environment ?? "main", s.environment ?? null, s.kind, s.status ?? "ready", s.connection ?? null, s.readOnly ?? false, s.writableTables ?? 0, s.dbName ?? null, s.serverId ?? null, s.parentId ?? null, actor])).rows[0];
+      const row = (await c.query(`${Registry.SOURCE} WHERE s.id = $1`, [r.id])).rows[0];
+      await this.event({ workspaceId, sourceId: r.id }, actor, `source.${s.kind === "hosted" ? "provisioning" : "connected"}`, `source:${row.slug}`, { project: row.project_name, branch: row.branch, dbName: s.dbName ?? null, serverId: s.serverId ?? null }, c);
+      return this.toSource(row);
     });
   }
-  async updateSource(id: number, patch: Partial<{ status: Source["status"]; error: string | null; connection: string; readOnly: boolean; writableTables: number; ownerPassword: string; readerPassword: string; provisionToken: string; name: string; branchedAt: string; branchCopy: "data" | "schema" }>) {
-    const cols: Record<string, string> = { branchedAt: "branched_at", branchCopy: "branch_copy", status: "status", error: "error", connection: "connection", readOnly: "read_only", writableTables: "writable_tables", ownerPassword: "owner_password", readerPassword: "reader_password", provisionToken: "provision_token", name: "name" };
+  async updateSource(id: number, patch: Partial<{ status: Source["status"]; error: string | null; connection: string; readOnly: boolean; writableTables: number; ownerPassword: string; readerPassword: string; provisionToken: string; branchedAt: string; branchCopy: "data" | "schema"; environment: Environment | null }>) {
+    const cols: Record<string, string> = { branchedAt: "branched_at", branchCopy: "branch_copy", status: "status", error: "error", connection: "connection", readOnly: "read_only", writableTables: "writable_tables", ownerPassword: "owner_password", readerPassword: "reader_password", provisionToken: "provision_token", environment: "environment" };
     const sets: string[] = [], vals: unknown[] = [];
     for (const [k, v] of Object.entries(patch)) { if (v === undefined) continue; vals.push(v); sets.push(`${cols[k]} = $${vals.length}`); }
     if (sets.length) await this.q(`UPDATE sources SET ${sets.join(", ")} WHERE id = $${vals.length + 1}`, [...vals, id]);
   }
-  /** Soft delete: history (versions, audit) stays; the slug and hosted db name become free again. */
+  async renameProject(workspaceId: string, projectId: number, name: string, actor: string) {
+    await this.tx(async (c) => {
+      const r = await c.query("UPDATE projects SET name = $3 WHERE id = $2 AND workspace_id = $1 AND deleted_at IS NULL RETURNING name", [workspaceId, projectId, name]);
+      if (!r.rowCount) throw new Error("Project not found.");
+      await this.event({ workspaceId }, actor, "project.renamed", `project:${projectId}`, { name }, c);
+    });
+  }
+  /** Soft delete: history (versions, audit) stays; the slug and hosted db name become free again. The last branch takes its project with it. */
   async removeSource(source: Source, actor: string) {
     await this.tx(async (c) => {
-      await c.query("UPDATE sources SET deleted_at = now(), slug = slug || '#' || id, db_name = CASE WHEN db_name IS NULL THEN NULL ELSE db_name || '#' || id END WHERE id = $1", [source.id]);
-      await this.event({ workspaceId: source.workspaceId, sourceId: source.id }, actor, "source.removed", `source:${source.slug}`, { name: source.name, kind: source.kind }, c);
+      await c.query("UPDATE sources SET deleted_at = now(), slug = slug || '#' || id, db_name = CASE WHEN db_name IS NULL THEN NULL ELSE db_name || '#' || id END, branch = branch || '#' || id WHERE id = $1", [source.id]);
+      const left = (await c.query("SELECT count(*)::int AS n FROM sources WHERE project_id = $1 AND deleted_at IS NULL", [source.projectId])).rows[0].n;
+      if (!left) await c.query("UPDATE projects SET deleted_at = now() WHERE id = $1", [source.projectId]);
+      await this.event({ workspaceId: source.workspaceId, sourceId: source.id }, actor, "source.removed", `source:${source.slug}`, { project: source.projectName, branch: source.branch, kind: source.kind }, c);
     });
   }
 
@@ -286,12 +314,12 @@ export class Registry {
     return this.loadMetrics(`WHERE m.source_id = $1 ${opts.includeDeprecated ? "" : "AND m.status <> 'deprecated'"} ORDER BY m.created_at`, [sourceId]);
   }
   /** Every live metric in a workspace with its source's slug, for the consumer API and MCP. */
-  async workspaceMetrics(workspaceId: string): Promise<(Metric & { sourceSlug: string })[]> {
-    const rows = await this.q(`SELECT m.*, v.body, s.slug AS source_slug FROM metrics m
+  async workspaceMetrics(workspaceId: string): Promise<(Metric & { sourceSlug: string; sourceEnvironment: Environment | null })[]> {
+    const rows = await this.q(`SELECT m.*, v.body, s.slug AS source_slug, s.environment AS source_environment FROM metrics m
       JOIN metric_versions v ON v.metric_id = m.id AND v.version = m.current_version
       JOIN sources s ON s.id = m.source_id AND s.deleted_at IS NULL
       WHERE s.workspace_id = $1 AND m.status <> 'deprecated' ORDER BY s.id, m.created_at`, [workspaceId]);
-    return rows.map((r) => ({ ...toMetric(r), sourceSlug: r.source_slug }));
+    return rows.map((r) => ({ ...toMetric(r), sourceSlug: r.source_slug, sourceEnvironment: r.source_environment ?? null }));
   }
   async version(metricId: number, version: number): Promise<MetricVersion | null> {
     return ((await this.q("SELECT body FROM metric_versions WHERE metric_id = $1 AND version = $2", [metricId, version]))[0]?.body ?? null) as MetricVersion | null;

@@ -5,8 +5,8 @@ import { handle } from "@/lib/http";
 // or a new hosted database Crema creates on one of the workspace's servers.
 export const GET = handle(({ r }) => r.sources());
 export const POST = handle(async ({ r, body, actor }) => {
-  if (body.kind === "hosted") return { source: await r.createHosted(String(body.name ?? ""), actor, body.serverId ? Number(body.serverId) : null, body.dbName ? String(body.dbName) : null) };
+  if (body.kind === "hosted") return { source: await r.createHosted(String(body.name ?? ""), actor, body.serverId ? Number(body.serverId) : null, body.dbName ? String(body.dbName) : null, body.withDevelopment === true) };
   const url = body.demo ? process.env.CREMA_DEMO_URL : String(body.url ?? "").trim();
   if (!url) throw new CremaError(body.demo ? "No demo database configured (CREMA_DEMO_URL)." : "Paste a postgres:// connection string.");
-  return r.addExternal(url, actor, body.demo ? "Demo (Lumen SaaS)" : body.name);
+  return r.addExternal(url, actor, body.demo ? "Demo (Lumen SaaS)" : body.name, body.environment ?? null);
 }, { admin: true });

@@ -98,7 +98,15 @@ Use a server of its own, not the one in `DATABASE_URL`: apps' load and disk use 
 
 ### Branches
 
-A hosted database is a project's **main** branch. **New branch** (e.g. `dev`) makes another database on the same server, `<main>_<branch>` with its own logins (fewer connections), and the worker fills it with a consistent snapshot of main: `pg_dump` (one repeatable-read transaction, main keeps serving) piped into `pg_restore` as the branch's owner, so every table belongs to the branch. Choose **schema + data** or **schema only** (no customer rows in development). **Reset from main** drops the branch's database and copies again; its connection string doesn't change.
+### Projects and branches
+
+What you create is a **project** (`ComicAI`). Its **production** branch is the hosted database; **+ Branch** adds **development** or **staging**, each its own database on the same server (`<production>_<branch>`, its own logins, fewer connections). Connected databases are projects of one branch, labelled production, staging or development by you, or not at all: Crema never assumes a database is production. The label is for people and policy (a PROD badge everywhere you can do harm); what you may do to a database (clone, reset, delete) depends on how it was made, never on its name. Renaming a project changes what people see; database names never change.
+
+Environment policy: development isn't discovered or drift-checked on a schedule and its metrics aren't offered to consumers by default (`/api/v1/metrics?development=1` and the metric's own ref still work); open it to look around or analyse on demand. Metrics belong to the branch they were certified on.
+
+From a project's page, one click goes to its Tables, SQL editor, Schema and Metrics, and every database page has a branch switcher.
+
+The worker fills a branch with a consistent snapshot of production: `pg_dump` (one repeatable-read transaction, main keeps serving) piped into `pg_restore` as the branch's owner, so every table belongs to the branch. Choose **schema + data** or **schema only** (no customer rows in development). **Reset from main** drops the branch's database and copies again; its connection string doesn't change.
 
 It's a copy, not Neon's copy-on-write: time and disk grow with main's size. Main is never reset, and can't be deleted while it has branches. A separate database doesn't stop a development app from messaging real customers: turn off outbound messages, webhooks, payments and cron there.
 

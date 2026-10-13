@@ -94,6 +94,32 @@ suite("step 1 safety regressions", () => {
     }
   });
 
+  it("migration 007 turns existing databases into projects with their branches", async () => {
+    const { MIGRATIONS } = await import("../core/db");
+    const sch = schema();
+    await admin.query(`CREATE SCHEMA ${sch}`);
+    const pool = new pg.Pool({ connectionString: url, options: `-c search_path=${sch}` });
+    try {
+      for (const m of MIGRATIONS.filter((x) => x.id < "007")) await pool.query(m.sql);
+      const ins = (slug: string, name: string, kind: string, parent: number | null = null, branch: string | null = null) => pool.query(
+        `INSERT INTO sources (workspace_id, slug, name, kind, status, db_name, server_id, parent_id, branch, created_by)
+         VALUES ('default', $1, $2, $3, 'ready', $4, $5, $6, $7, 'Ana') RETURNING id`, [slug, name, kind, kind === "hosted" ? `db_${slug}` : null, kind === "hosted" ? 1 : null, parent, branch]);
+      await pool.query(`INSERT INTO servers (workspace_id, name, admin_url, provisioner, public_host, ssl, version, created_by) VALUES ('default', 's', 'x', 'p', 'h:1', true, '18', 'Ana')`);
+      const shop = (await ins("shop", "Shop", "hosted")).rows[0].id;
+      const dev = (await ins("shop_dev", "Shop", "hosted", shop, "dev")).rows[0].id;
+      const ext = (await ins("warehouse", "Warehouse", "external")).rows[0].id;
+      await pool.query(MIGRATIONS.find((x) => x.id === "007_projects")!.sql);
+      const rows = (await pool.query(`SELECT s.id, s.slug, s.branch, s.environment, p.name AS project, s.project_id FROM sources s JOIN projects p ON p.id = s.project_id ORDER BY s.id`)).rows;
+      expect(rows).toEqual([
+        { id: shop, slug: "shop", branch: "production", environment: "production", project: "Shop", project_id: expect.any(Number) },
+        { id: dev, slug: "shop_dev", branch: "dev", environment: "development", project: "Shop", project_id: rows[0].project_id },
+        { id: ext, slug: "warehouse", branch: "main", environment: null, project: "Warehouse", project_id: expect.any(Number) }, // connected: nobody labelled it
+      ]);
+      expect(rows[2].project_id).not.toBe(rows[0].project_id);
+      expect((await pool.query(`SELECT count(*)::int AS n FROM projects`)).rows[0].n).toBe(2);
+    } finally { await pool.end(); }
+  });
+
   it("keeps a provisioner login it is given, and offers the bundled server once", async () => {
     const c = new pg.Client({ connectionString: url }); await c.connect();
     const role = `crema_provisioner_${randomUUID().replaceAll("-", "").slice(0, 6)}`;
@@ -143,7 +169,9 @@ suite("step 1 safety regressions", () => {
 
       const dev = await svc.createBranch(root.id, { branch: "dev" }, "test");
       const firstOperation = (await svc.reg.db.pool.query("SELECT branch_job_id FROM sources WHERE id = $1", [dev.id])).rows[0].branch_job_id;
-      expect(dev).toMatchObject({ status: "provisioning", dbName: `${main}_dev`, parentId: root.id, branch: "dev", branchCopy: "data" });
+      expect(dev).toMatchObject({ status: "provisioning", dbName: `${main}_dev`, parentId: root.id, branch: "dev", branchCopy: "data", projectId: root.projectId, environment: "development", name: "Shop · dev", projectName: "Shop" });
+      expect(root).toMatchObject({ branch: "production", environment: "production", name: "Shop" });
+      await expect(svc.createBranch(root.id, { branch: "production" }, "test")).rejects.toThrow(/not “production”/);
       await svc.copyBranch(dev.id); // the worker's job
       const ready = (await svc.reg.source("default", dev.id))!;
       expect(ready.status).toBe("ready");
@@ -197,7 +225,7 @@ suite("step 1 safety regressions", () => {
       await expect(svc.resetBranch(root.id, "test")).rejects.toThrow(/main database never is/);
       await expect(svc.removeSource(root.id, "test")).rejects.toThrow(/Delete its branches first \(dev, empty\)/);
       await expect(svc.createBranch(root.id, { branch: "dev" }, "test")).rejects.toThrow(/already has a “dev” branch/);
-      await expect(svc.createBranch(dev.id, { branch: "x" }, "test")).rejects.toThrow(/main database/);
+      await expect(svc.createBranch(dev.id, { branch: "x" }, "test")).rejects.toThrow(/production database/);
 
       for (const b of [dev, empty, root]) await svc.removeSource(b.id, "test");
       expect((await admin.query("SELECT count(*)::int AS n FROM pg_database WHERE datname LIKE $1", [`${main}%`])).rows[0].n).toBe(0);
@@ -227,5 +255,55 @@ suite("step 1 safety regressions", () => {
     expect((await svc.reg.metric(source.id, "orders"))!.status).toBe("needs_attention");
     expect(await base.checkDrift()).toMatchObject({ changed: 0 });
     expect((await base.audit()).filter((event) => event.action === "metric.drift_detected")).toHaveLength(1);
+
+    // an environment label drives policy, not the name: consumers read production by default, and
+    // development isn't on the drift schedule (it's checked when someone opens it)
+    expect(await base.listMetrics()).toHaveLength(1);
+    expect(source.environment).toBeNull(); // connected, nobody labelled it
+    await svc.reg.updateSource(source.id, { environment: "development" });
+    expect(await base.listMetrics()).toHaveLength(0);
+    expect(await base.listMetrics({ includeDevelopment: true })).toHaveLength(1);
+    await svc.reg.updateSource(source.id, { status: "ready" });
+    await svc.reg.db.pool.query("UPDATE metrics SET status = 'certified', attention = NULL WHERE source_id = $1", [source.id]);
+    expect(await base.checkDrift()).toMatchObject({ checked: 0, changed: 0 });
+    await svc.reg.updateSource(source.id, { environment: "staging" });
+    expect(await base.checkDrift()).toMatchObject({ checked: 1 });
+  });
+
+  it("a project: production and development together, renamed, and gone with its last branch", async () => {
+    const svc = new Crema(new Registry(url, { schema: schema() }));
+    const { createdProvisioner } = await svc.addServer({ url: url! }, "test");
+    const names: string[] = [];
+    try {
+      const prod = await svc.createHosted("ComicAI", "test", null, null, true);
+      names.push(prod.dbName!);
+      const all = await svc.reg.sources("default");
+      const dev = all.find((x) => x.parentId === prod.id)!;
+      names.push(dev.dbName!);
+      expect(all.map((x) => [x.projectName, x.branch, x.environment])).toEqual([["ComicAI", "production", "production"], ["ComicAI", "development", "development"]]);
+      expect(dev.dbName).toBe(`${prod.dbName}_development`);
+      expect(dev).toMatchObject({ branchCopy: "schema", name: "ComicAI · development" });
+
+      // renaming changes what people see everywhere, never a database name
+      await svc.renameProject(dev.id, "  ComicAI App ", "test");
+      const renamed = await svc.reg.sources("default");
+      expect(renamed.map((x) => x.name)).toEqual(["ComicAI App", "ComicAI App · development"]);
+      expect(renamed.map((x) => x.dbName)).toEqual([prod.dbName, dev.dbName]);
+      await expect(svc.renameProject(dev.id, "   ", "test")).rejects.toThrow(/Give the project a name/);
+
+      // delete development, then production: the project goes with its last branch
+      await svc.copyBranch(dev.id);
+      await svc.removeSource(dev.id, "test");
+      expect((await svc.reg.sources("default")).map((x) => x.branch)).toEqual(["production"]);
+      await svc.removeSource(prod.id, "test");
+      expect(await svc.reg.sources("default")).toEqual([]);
+      expect((await svc.reg.db.pool.query("SELECT count(*)::int AS n FROM projects WHERE deleted_at IS NULL")).rows[0].n).toBe(0);
+    } finally {
+      for (const d of names) {
+        await admin.query(`DROP DATABASE IF EXISTS ${d} WITH (FORCE)`);
+        await admin.query(`DROP ROLE IF EXISTS ${d}_owner`); await admin.query(`DROP ROLE IF EXISTS ${d}_crema`);
+      }
+      await admin.query(`DROP ROLE IF EXISTS ${createdProvisioner}`);
+    }
   });
 });

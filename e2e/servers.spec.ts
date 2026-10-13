@@ -7,7 +7,7 @@ const ADMIN_URL = "postgresql://localhost:5432/postgres";
 const DB = "e2e_shop";
 const psql = (sql: string) => execFileSync("psql", ["-d", "postgres", "-Atc", sql], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
 const cleanup = () => {
-  for (const d of [`${DB}_dev`, DB]) {
+  for (const d of [`${DB}_staging`, `${DB}_development`, DB]) {
     psql(`DROP DATABASE IF EXISTS ${d} WITH (FORCE)`);
     psql(`DROP ROLE IF EXISTS ${d}_owner`); psql(`DROP ROLE IF EXISTS ${d}_crema`);
   }
@@ -45,7 +45,7 @@ test("add a server → create a database → connect → delete → remove the s
 
   // no server yet: creating a database starts by adding one; production offers no shortcut
   await page.goto("/#databases");
-  await page.getByRole("button", { name: "Create a new one" }).click();
+  await page.getByRole("button", { name: "New project", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Add a hosting server" })).toBeVisible();
   await page.getByLabel("Admin connection string").fill(ADMIN_URL);
   await page.getByLabel("Address apps use").fill("db.example.com:6543");
@@ -59,8 +59,8 @@ test("add a server → create a database → connect → delete → remove the s
   expect(provisioner).toMatch(/^crema_provisioner_/);
   expect(psql(`SELECT rolsuper::text || rolcreatedb::text || rolcreaterole::text FROM pg_roles WHERE rolname = '${provisioner}'`)).toBe("falsetruetrue");
 
-  // a database for an app, with its connection string on the public address, TLS required
-  await page.getByRole("button", { name: "+ New database" }).click();
+  // a project for an app: production, with its connection string on the public address, TLS required
+  await page.getByRole("button", { name: "+ New project" }).click();
   await page.getByLabel("Name").fill("E2E Shop");
   // a natural random name, Neon-style; ↻ gives another
   const suggested = page.locator(".use-note .mono").first();
@@ -70,50 +70,79 @@ test("add a server → create a database → connect → delete → remove the s
   await expect(suggested).not.toHaveText(firstName!);
   // editable before creation; reserved and taken names are refused as you type
   await page.getByRole("button", { name: "Edit" }).click();
-  const dbField = page.getByLabel("Database name");
+  const dbField = page.getByLabel("Production database name");
   await dbField.fill("postgres");
   await expect(page.getByText("“postgres” is reserved.")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Create database" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Create project" })).toBeDisabled();
   await dbField.fill("template_taken_probe");
   psql("CREATE ROLE template_taken_probe_owner");
   await dbField.fill("template_taken_prob"); await dbField.fill("template_taken_probe"); // re-check after the role exists
   await expect(page.getByText("“template_taken_probe_owner” already exists on this server.")).toBeVisible();
   psql("DROP ROLE template_taken_probe_owner");
   await dbField.fill(DB);
-  await page.getByRole("button", { name: "Create database" }).click();
-  await expect(page.getByText(`${DB} is ready.`)).toBeVisible();
+  // a development branch alongside is on by default
+  await expect(page.getByLabel(/Also create a development branch/)).toBeChecked();
+  await page.getByRole("button", { name: "Create project" }).click();
+  await expect(page.getByText("E2E Shop is ready, with a development branch.")).toBeVisible();
   await expect(page.getByRole("heading", { name: "E2E Shop" })).toBeVisible();
+  const tabs = page.getByRole("navigation", { name: "Branches" });
+  await expect(tabs.getByRole("link", { name: /^production/ })).toContainText("PROD");
+  await expect(tabs.getByRole("link", { name: /^development/ })).toContainText("DEV");
+  // the sidebar groups by project, branches under it
+  await expect(page.locator(".proj-name", { hasText: "E2E Shop" })).toHaveCount(1);
   await expect(page.getByText("on db.example.com")).toBeVisible();
   await expect(page.locator(".conn-code")).toContainText(`postgresql://${DB}_owner:••••••••••••@db.example.com:6543/${DB}?sslmode=require`);
   expect(psql(`SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname = '${DB}'`)).toBe(`${DB}_owner`);
+  // one click from the connection to its tables, SQL editor and metrics
+  const sections = page.getByRole("navigation", { name: "Section" });
+  await expect(sections.getByRole("link", { name: "Tables" })).toHaveAttribute("href", /\/s\/e2e_shop#tables$/);
+  await expect(sections.getByRole("link", { name: "SQL editor" })).toHaveAttribute("href", /\/s\/e2e_shop#sql$/);
 
-  // a dev branch: a snapshot of main, copied by the worker, with its own login
+  // the development branch is made by the worker; production's tables then reach a staging branch with data
+  await expect(tabs.getByRole("link", { name: /^development/ })).toBeVisible();
   asOwner(DB, "CREATE TABLE orders (id serial PRIMARY KEY, total int); INSERT INTO orders (total) VALUES (10), (20)");
-  await page.getByRole("button", { name: "New branch" }).click();
-  await expect(page.getByLabel("Branch name")).toHaveValue("dev");
-  await expect(page.getByText(`Database ${DB}_dev`)).toBeVisible();
+  await tabs.getByRole("button", { name: "+ Branch" }).click();
+  await page.getByRole("tab", { name: "Staging" }).click();
+  await expect(page.getByLabel("Branch name")).toHaveValue("staging");
+  await page.getByRole("tab", { name: "Schema + data" }).click();
+  await expect(page.getByText(`Database ${DB}_staging`)).toBeVisible();
   await page.getByRole("button", { name: "Create branch" }).click();
-  await expect(page.getByRole("heading", { name: "E2E Shop · dev" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Copied from E2E Shop" })).toBeVisible();
+  await expect(tabs.getByRole("link", { name: /^staging/ })).toContainText("STG");
+  await expect(page.getByRole("heading", { name: "Copied from production" })).toBeVisible();
   await expect(page.getByText(/Schema and data, .*ago|Schema and data, just now/)).toBeVisible({ timeout: 60_000 });
-  expect(asOwner(`${DB}_dev`, "SELECT count(*) FROM orders")).toBe("2");
-  await expect(page.locator(".conn-code")).toContainText(`postgresql://${DB}_dev_owner:`);
-  // main can't be deleted while it has branches; delete the branch first
-  await page.getByRole("button", { name: /^E2E Shop/ }).click();
-  await expect(page.getByText("Delete its branches first (dev).")).toBeVisible();
-  await page.getByRole("button", { name: /^↳ dev/ }).click();
+  expect(asOwner(`${DB}_staging`, "SELECT count(*) FROM orders")).toBe("2");
+  await expect(page.locator(".conn-code")).toContainText(`postgresql://${DB}_staging_owner:`);
+  // the page says what Crema does with development
+  await tabs.getByRole("link", { name: /^development/ }).click();
+  await expect(page.getByText(/Crema doesn’t analyse development on its own/)).toBeVisible();
+  // production can't be deleted while it has branches
+  await tabs.getByRole("link", { name: /^production/ }).click();
+  await expect(page.getByText(/Delete its branches first \(development, staging\)/)).toBeVisible();
+  // delete the branches: the dialog shows exactly what to type; the button stays off until it matches
+  await tabs.getByRole("link", { name: /^staging/ }).click();
   await page.getByRole("button", { name: "Delete", exact: true }).click();
-  // the dialog shows exactly what to type; the button stays off until it matches
   const dialog = page.getByRole("dialog");
   await expect(dialog.getByText("Type this to confirm")).toBeVisible();
-  await expect(dialog.locator("code")).toHaveText(`${DB}_dev`);
+  await expect(dialog.locator("code")).toHaveText(`${DB}_staging`);
   const confirmBtn = dialog.getByRole("button", { name: "Delete branch" });
   await expect(confirmBtn).toBeDisabled();
-  await dialog.getByLabel(`Type ${DB}_dev to confirm`).fill(`${DB}_de`);
+  await dialog.getByLabel(`Type ${DB}_staging to confirm`).fill(`${DB}_stagin`);
   await expect(confirmBtn).toBeDisabled();
-  await dialog.getByLabel(`Type ${DB}_dev to confirm`).fill(`${DB}_dev`);
+  await dialog.getByLabel(`Type ${DB}_staging to confirm`).fill(`${DB}_staging`);
   await confirmBtn.click();
-  await expect(page.getByText(`Deleted ${DB}_dev.`)).toBeVisible();
+  await expect(page.getByText(`Deleted ${DB}_staging.`)).toBeVisible();
+  await tabs.getByRole("link", { name: /^development/ }).click();
+  await page.getByRole("button", { name: "Delete", exact: true }).click();
+  await page.getByRole("dialog").getByLabel(`Type ${DB}_development to confirm`).fill(`${DB}_development`);
+  await page.getByRole("dialog").getByRole("button", { name: "Delete branch" }).click();
+  await expect(page.getByText(`Deleted ${DB}_development.`)).toBeVisible();
+
+  // renaming changes the project's name everywhere, never the database
+  await page.getByRole("button", { name: "Rename" }).click();
+  await page.getByRole("dialog").getByLabel("Name").fill("E2E Shop App");
+  await page.getByRole("dialog").getByRole("button", { name: "Rename" }).click();
+  await expect(page.getByRole("heading", { name: "E2E Shop App" })).toBeVisible();
+  await expect(page.locator(".conn-code")).toContainText(`/${DB}?sslmode=require`);
 
   // the page fills the window: no white strip under it
   const gap = await page.evaluate(() => window.innerHeight - document.querySelector(".hostedpage")!.getBoundingClientRect().bottom);
@@ -124,10 +153,10 @@ test("add a server → create a database → connect → delete → remove the s
   await expect(page.getByRole("button", { name: "Remove" })).toBeDisabled();
 
   // delete the database (typed confirmation), then the server
-  await page.getByRole("button", { name: /^E2E Shop/ }).click();
+  await page.getByRole("button", { name: /^production/ }).click();
   await page.getByRole("button", { name: "Delete", exact: true }).click();
   await page.getByRole("dialog").getByLabel(`Type ${DB} to confirm`).fill(DB);
-  await page.getByRole("dialog").getByRole("button", { name: "Delete database" }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Delete project" }).click();
   await expect(page.getByText(`Deleted ${DB}.`)).toBeVisible();
   expect(psql(`SELECT count(*) FROM pg_database WHERE datname = '${DB}'`)).toBe("0");
 

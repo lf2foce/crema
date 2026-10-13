@@ -153,11 +153,27 @@ export interface Comparison {
 export type ConceptStatus = "open" | "certified" | "rejected" | "superseded";
 
 /** A database Crema analyses: one you connected (external) or one it created for an app (hosted). */
+export type Environment = "production" | "staging" | "development";
+
+/** What a person names: ComicAI. Its branches are sources. */
+export interface Project {
+  id: number;
+  workspaceId: string;
+  name: string;
+  createdBy: string;
+  createdAt: string;
+}
+
 export interface Source {
   id: number;
   workspaceId: string;
   slug: string;
+  /** what people see: the project's name, plus the branch for any other than production */
   name: string;
+  projectId: number;
+  projectName: string;
+  /** what this branch is for; null: a connected database nobody has labelled */
+  environment: Environment | null;
   kind: "external" | "hosted";
   status: "provisioning" | "ready" | "failed";
   error: string | null;
@@ -166,9 +182,10 @@ export interface Source {
   dbName: string | null;
   /** hosted: the server it lives on */
   serverId: number | null;
-  /** a branch: the database it was copied from (its project's main), and its name ("dev") */
+  /** a branch: the database it was copied from (its project's main) */
   parentId: number | null;
-  branch: string | null;
+  /** its name within the project: production, development, staging… */
+  branch: string;
   /** a branch: what is copied from the parent */
   branchCopy: "data" | "schema" | null;
   /** a branch: when its data was last copied from the parent */
