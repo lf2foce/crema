@@ -6,14 +6,24 @@ import { MIN_PASSWORD_LENGTH } from "@/lib/password";
 /** A pasted setup link, or just its code: keep the code. */
 const codeFrom = (v: string) => {
   const t = v.trim();
-  try { return new URL(t).searchParams.get("setup") ?? t; } catch { return t; }
+  try {
+    const u = new URL(t);
+    return new URLSearchParams(u.hash.slice(1)).get("setup") ?? u.searchParams.get("setup") ?? t;
+  } catch { return t; }
 };
 
 export default function SignIn() {
   const [setup, setSetup] = useState<{ hasUsers: boolean; google: boolean; setupCode?: boolean; fixedToken?: boolean } | null>(null);
-  // the one-time setup link carries its code: /sign-in?setup=…
-  const [token, setToken] = useState(() => (typeof window === "undefined" ? "" : new URLSearchParams(window.location.search).get("setup") ?? ""));
-  const fromLink = typeof window !== "undefined" && new URLSearchParams(window.location.search).has("setup");
+  // the one-time setup link carries its code in the fragment (/sign-in#setup=…): take it into memory
+  // and off the address bar, so it isn't left in history or shared by copying the URL
+  const [token, setToken] = useState("");
+  const [fromLink, setFromLink] = useState(false);
+  useEffect(() => {
+    const code = new URLSearchParams(window.location.hash.slice(1)).get("setup");
+    if (!code) return;
+    setToken(code); setFromLink(true);
+    window.history.replaceState(null, "", window.location.pathname + window.location.search);
+  }, []);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -57,7 +67,7 @@ export default function SignIn() {
         {first && setup.setupCode && !fromLink && (setup.fixedToken
           ? <label className="field">Setup token<input className="input" value={token} onChange={(e) => setToken(e.target.value)} required autoComplete="off" spellCheck={false} /></label>
           : <label className="field">Setup link
-              <input className="input mono" value={token} onChange={(e) => setToken(codeFrom(e.target.value))} required autoComplete="off" spellCheck={false} placeholder="https://…/sign-in?setup=…" />
+              <input className="input mono" value={token} onChange={(e) => setToken(codeFrom(e.target.value))} required autoComplete="off" spellCheck={false} placeholder="https://…/sign-in#setup=…" />
               <span className="small muted">Paste the one-time link Crema printed in its server log when it started (in Docker: the <span className="mono">web</span> service’s logs). Lost it? Restart Crema, or run <span className="mono">crema setup-link</span> on the server.</span>
             </label>)}
         {first && <label className="field">Name<input className="input" value={name} onChange={(e) => setName(e.target.value)} required autoFocus /></label>}

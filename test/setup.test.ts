@@ -38,7 +38,7 @@ suite("first admin on a public address", () => {
     const pool = mod.db.database().pool;
     expect(mod.auth.setupPolicy()).toEqual({ codeRequired: true, fixedToken: false });
     const first = (await mod.code.issueSetupCode(pool))!;
-    expect(mod.code.setupLink("https://crema.example.com/", first)).toBe(`https://crema.example.com/sign-in?setup=${first}`);
+    expect(mod.code.setupLink("https://crema.example.com/", first)).toBe(`https://crema.example.com/sign-in#setup=${first}`); // fragment: never sent to a server
     // only a hash is stored
     expect((await pool.query("SELECT value FROM settings WHERE key = 'setup_code'")).rows[0].value).not.toContain(first);
 
@@ -51,6 +51,15 @@ suite("first admin on a public address", () => {
     await expect(signUp("a@example.com", second)).rejects.toThrow(/missing, used or expired/);
 
     const third = (await mod.code.issueSetupCode(pool))!;
+    // the account insert fails after the code was accepted: the code survives, and the same person
+    // can retry at once; somebody else can't take over meanwhile
+    await pool.query(`CREATE FUNCTION fail_insert() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'disk full'; END $$;
+      CREATE TRIGGER fail_insert BEFORE INSERT ON "user" FOR EACH ROW EXECUTE FUNCTION fail_insert()`);
+    await expect(signUp("owner@example.com", third)).rejects.toThrow();
+    await pool.query(`DROP TRIGGER fail_insert ON "user"; DROP FUNCTION fail_insert()`);
+    expect((await pool.query(`SELECT count(*)::int AS n FROM "user"`)).rows[0].n).toBe(0);
+    expect(await mod.code.setupCodeMatches(pool, third)).toBe(true);
+    await expect(signUp("intruder@example.com", third)).rejects.toThrow(/Someone else is setting up/);
     const res = await signUp("owner@example.com", third);
     expect(res.user.email).toBe("owner@example.com");
     expect((await pool.query(`SELECT role FROM "user"`)).rows).toEqual([{ role: "admin" }]);

@@ -1,7 +1,7 @@
 // The one-time setup link: how the first admin is created on a public address without a shared
 // secret in the environment. While nobody has an account, the web server issues a random code at
-// startup and logs a link with it (`crema setup-link` issues a fresh one). Only its SHA-256 is stored,
-// so reading the database doesn't give the link away. It works once, for 24 hours, and a new one
+// startup and logs a link with it (`crema setup-link` issues a fresh one). Only its SHA-256 is
+// stored, so reading the database doesn't give the link away. It works once, for 24 hours, and a new one
 // replaces the old. CREMA_SETUP_TOKEN, when set, keeps working as a fixed alternative.
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import type pg from "pg";
@@ -41,7 +41,11 @@ export async function spendSetupCode(db: Q) {
   await db.query("DELETE FROM settings WHERE key = $1", [KEY]);
 }
 
-export const setupLink = (appUrl: string, code: string) => `${appUrl.replace(/\/$/, "")}/sign-in?setup=${encodeURIComponent(code)}`;
+/**
+ * In the fragment, not the query: a fragment never leaves the browser, so the code doesn't reach
+ * proxies or access logs. The page moves it into memory and off the address bar.
+ */
+export const setupLink = (appUrl: string, code: string) => `${appUrl.replace(/\/$/, "")}/sign-in#setup=${encodeURIComponent(code)}`;
 
 /** What the server prints at startup: the link, framed so it stands out in a log. */
 export function setupBanner(appUrl: string, code: string) {

@@ -71,18 +71,23 @@ function createAuth() {
                 ? "Wrong or missing setup token (CREMA_SETUP_TOKEN)."
                 : "This setup link is missing, used or expired. Open the newest link from the server log, or run `crema setup-link` for a new one." });
             }
+            // A claim whose account never got created (the insert failed after this point) can be
+            // retaken at once by the same email (a second insert of it hits the unique email), and
+            // by anyone after 2 minutes.
+            const email = String(user.email ?? "").toLowerCase();
             const claim = await pool.query(
               `INSERT INTO settings (key, value) VALUES ('admin_claimed', $1)
                ON CONFLICT (key) DO UPDATE SET value = excluded.value
-                 -- a claim whose account never got created (it failed after this point) can be retaken
-                 WHERE NOT EXISTS (SELECT 1 FROM "user") AND settings.value::timestamptz < now() - interval '2 minutes'
-               RETURNING key`, [new Date().toISOString()]);
+                 WHERE NOT EXISTS (SELECT 1 FROM "user")
+                   AND ((settings.value::jsonb->>'at')::timestamptz < now() - interval '2 minutes' OR settings.value::jsonb->>'email' = $2)
+               RETURNING key`, [JSON.stringify({ at: new Date().toISOString(), email }), email]);
             if (!claim.rowCount) throw new APIError("FORBIDDEN", { message: "Someone else is setting up this instance. Ask them to invite you." });
-            await spendSetupCode(pool); // one use
+            // the setup code is spent only once the account exists (after, below): a failed insert keeps it
             return { data: { ...user, role: "admin" } };
           },
           // everyone belongs to the default workspace: the first account owns it
           after: async (user) => {
+            if ((user as { role?: string }).role === "admin") await spendSetupCode(pool); // the first admin exists: one use
             const role = (user as { role?: string }).role === "admin"
               ? ((await pool.query(`SELECT 1 FROM "member" WHERE "organizationId" = 'default' AND role = 'owner'`)).rowCount ? "admin" : "owner")
               : "member";
