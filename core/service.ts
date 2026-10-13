@@ -788,10 +788,14 @@ export class Crema {
   // ---------- reuse: certified metrics for software, AI and people ----------
 
   /** Every live metric in the workspace. `ref` ("source/key") addresses it everywhere else. */
-  /** Consumers read production by default: metrics certified on development branches are listed only when asked for (or fetched by their ref). */
-  async listMetrics(opts: { includeDevelopment?: boolean } = {}) {
+  /**
+   * Consumers read production by default: a database nobody labelled counts (that's every connected
+   * database until someone says what it is); staging and development branches are listed only when
+   * asked for (or fetched by their ref).
+   */
+  async listMetrics(opts: { includeNonProduction?: boolean } = {}) {
     return (await this.reg.workspaceMetrics(this.scope.workspaceId))
-      .filter((m) => opts.includeDevelopment || m.sourceEnvironment !== "development")
+      .filter((m) => opts.includeNonProduction || m.sourceEnvironment === null || m.sourceEnvironment === "production")
       .map((m) => contract(m, m.sourceSlug));
   }
 

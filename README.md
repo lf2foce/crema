@@ -102,7 +102,7 @@ Use a server of its own, not the one in `DATABASE_URL`: apps' load and disk use 
 
 What you create is a **project** (`ComicAI`). Its **production** branch is the hosted database; **+ Branch** adds **development** or **staging**, each its own database on the same server (`<production>_<branch>`, its own logins, fewer connections). Connected databases are projects of one branch, labelled production, staging or development by you, or not at all: Crema never assumes a database is production. The label is for people and policy (a PROD badge everywhere you can do harm); what you may do to a database (clone, reset, delete) depends on how it was made, never on its name. Renaming a project changes what people see; database names never change.
 
-Environment policy: development isn't discovered or drift-checked on a schedule and its metrics aren't offered to consumers by default (`/api/v1/metrics?development=1` and the metric's own ref still work); open it to look around or analyse on demand. Metrics belong to the branch they were certified on.
+Environment policy: development isn't discovered or drift-checked on a schedule, and consumers (API, MCP, agents) are offered production's metrics by default, plus those of databases nobody labelled: staging and development metrics need `/api/v1/metrics?all=1` (the metric's own ref always works); open it to look around or analyse on demand. Metrics belong to the branch they were certified on.
 
 From a project's page, one click goes to its Tables, SQL editor, Schema and Metrics, and every database page has a branch switcher.
 

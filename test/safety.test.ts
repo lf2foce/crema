@@ -107,15 +107,17 @@ suite("step 1 safety regressions", () => {
       await pool.query(`INSERT INTO servers (workspace_id, name, admin_url, provisioner, public_host, ssl, version, created_by) VALUES ('default', 's', 'x', 'p', 'h:1', true, '18', 'Ana')`);
       const shop = (await ins("shop", "Shop", "hosted")).rows[0].id;
       const dev = (await ins("shop_dev", "Shop", "hosted", shop, "dev")).rows[0].id;
+      const odd = (await ins("shop_odd", "Shop", "hosted", shop, "production")).rows[0].id; // allowed before: only "main" was reserved
       const ext = (await ins("warehouse", "Warehouse", "external")).rows[0].id;
       await pool.query(MIGRATIONS.find((x) => x.id === "007_projects")!.sql);
       const rows = (await pool.query(`SELECT s.id, s.slug, s.branch, s.environment, p.name AS project, s.project_id FROM sources s JOIN projects p ON p.id = s.project_id ORDER BY s.id`)).rows;
       expect(rows).toEqual([
         { id: shop, slug: "shop", branch: "production", environment: "production", project: "Shop", project_id: expect.any(Number) },
         { id: dev, slug: "shop_dev", branch: "dev", environment: "development", project: "Shop", project_id: rows[0].project_id },
+        { id: odd, slug: "shop_odd", branch: `production_${odd}`, environment: "development", project: "Shop", project_id: rows[0].project_id },
         { id: ext, slug: "warehouse", branch: "main", environment: null, project: "Warehouse", project_id: expect.any(Number) }, // connected: nobody labelled it
       ]);
-      expect(rows[2].project_id).not.toBe(rows[0].project_id);
+      expect(rows[3].project_id).not.toBe(rows[0].project_id);
       expect((await pool.query(`SELECT count(*)::int AS n FROM projects`)).rows[0].n).toBe(2);
     } finally { await pool.end(); }
   });
@@ -259,14 +261,17 @@ suite("step 1 safety regressions", () => {
     // an environment label drives policy, not the name: consumers read production by default, and
     // development isn't on the drift schedule (it's checked when someone opens it)
     expect(await base.listMetrics()).toHaveLength(1);
-    expect(source.environment).toBeNull(); // connected, nobody labelled it
+    expect(source.environment).toBeNull(); // connected, nobody labelled it: still offered
+    for (const [environment, offered] of [["production", true], ["staging", false], ["development", false]] as const) {
+      await svc.reg.updateSource(source.id, { environment });
+      expect(await base.listMetrics(), environment).toHaveLength(offered ? 1 : 0);
+      expect(await base.listMetrics({ includeNonProduction: true }), `${environment} with all`).toHaveLength(1);
+    }
     await svc.reg.updateSource(source.id, { environment: "development" });
-    expect(await base.listMetrics()).toHaveLength(0);
-    expect(await base.listMetrics({ includeDevelopment: true })).toHaveLength(1);
     await svc.reg.updateSource(source.id, { status: "ready" });
     await svc.reg.db.pool.query("UPDATE metrics SET status = 'certified', attention = NULL WHERE source_id = $1", [source.id]);
     expect(await base.checkDrift()).toMatchObject({ checked: 0, changed: 0 });
-    await svc.reg.updateSource(source.id, { environment: "staging" });
+    await svc.reg.updateSource(source.id, { environment: "staging" }); // staging is checked: it's what production will look like
     expect(await base.checkDrift()).toMatchObject({ checked: 1 });
   });
 

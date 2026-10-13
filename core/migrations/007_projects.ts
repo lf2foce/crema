@@ -20,6 +20,9 @@ ALTER TABLE sources ADD COLUMN environment text CHECK (environment IN ('producti
 DO $$
 DECLARE r record; pid integer;
 BEGIN
+  -- an earlier version only reserved the name "main": a branch called "production" would collide
+  -- with the production branch every database now has. Rename it (its database name is unchanged).
+  UPDATE sources SET branch = 'production_' || id WHERE parent_id IS NOT NULL AND branch = 'production';
   FOR r IN SELECT * FROM sources WHERE parent_id IS NULL ORDER BY id LOOP
     INSERT INTO projects (workspace_id, name, created_by, created_at, deleted_at)
       VALUES (r.workspace_id, r.name, r.created_by, r.created_at, r.deleted_at) RETURNING id INTO pid;
