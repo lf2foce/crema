@@ -84,7 +84,7 @@ To upgrade, fetch the new image, migrate while the current version keeps serving
 (migrations are expand-only, see below), then restart web and worker on it:
 
 ```sh
-docker compose --env-file .env.docker.local pull migrate web worker
+docker compose --env-file .env.docker.local pull
 docker compose --env-file .env.docker.local run --rm -T migrate
 # Only if migration succeeded:
 docker compose --env-file .env.docker.local up -d web worker
@@ -119,6 +119,46 @@ time someone creates a database. Apps connect on `CREMA_HOSTING_PORT` (5433) at
 volume: changing either password later means `ALTER ROLE` inside the container too.
 Back the volume up at the cluster level; it holds your apps' data.
 
+## Backups
+
+Both Postgres servers run `ghcr.io/lf2foce/crema-postgres` (PostgreSQL 18 with
+pgBackRest, built from `deploy/postgres`). Point them at a bucket on S3-compatible
+storage (Cloudflare R2, S3, Backblaze B2, MinIO) and each one archives every WAL
+segment there as it fills (at least every 5 minutes), encrypted, plus base backups
+you schedule. Together they restore either server to any moment in the retention
+window (two full backups, about two weeks with a weekly full):
+
+```sh
+CREMA_BACKUP_S3_ENDPOINT=<account>.r2.cloudflarestorage.com
+CREMA_BACKUP_S3_BUCKET=backups
+CREMA_BACKUP_S3_KEY=...
+CREMA_BACKUP_S3_SECRET=...
+CREMA_BACKUP_PASSPHRASE=$(openssl rand -hex 32)   # keep a copy off this machine
+CREMA_BACKUP_PATH=/crema                          # state in /crema/state, apps in /crema/hosting
+```
+
+Restart both servers once after setting them (archiving starts at startup), then
+schedule base backups, e.g. in the host's crontab:
+
+```sh
+0 3 * * 0   cd /srv/crema && docker compose exec -T -u postgres postgres crema-backup full && docker compose exec -T -u postgres hosting crema-backup full
+0 3 * * 1-6 cd /srv/crema && docker compose exec -T -u postgres postgres crema-backup diff && docker compose exec -T -u postgres hosting crema-backup diff
+```
+
+Each run also checks that WAL archiving works and fails loudly when it doesn't;
+alert on a failing run. A backup you haven't restored isn't one: this restores the
+latest state into a scratch directory, starts it, lists what it holds and throws it away:
+
+```sh
+docker compose run --rm --no-deps -u postgres postgres crema-restore-test
+docker compose run --rm --no-deps -u postgres hosting crema-restore-test
+```
+
+To restore for real, stop the server, move its data directory aside and run
+`pgbackrest restore` (with `--type=time --target="<timestamp>"` for a moment) in a
+container of the same service, then start it; see pgBackRest's user guide. Without
+the passphrase the backups are unreadable, so losing it is losing them.
+
 ## Migrations: expand, then contract
 
 A deploy runs migrations while the previous version is still serving, and during a
@@ -137,8 +177,8 @@ With a reverse proxy that follows containers on the Compose network and routes
 only to healthy ones (Traefik does, so Dokploy does), web can be replaced without a gap:
 
 ```sh
-docker compose up -d --wait postgres hosting
-docker compose pull migrate web worker
+docker compose pull
+docker compose up -d --wait postgres hosting         # restarts them only if their image changed
 docker compose run --rm -T migrate                  # the current web keeps serving
 docker compose up -d --no-deps --no-recreate --scale web=2 --wait --wait-timeout 180 web
 docker compose up -d --no-deps --scale web=1 web    # removes the outdated container first

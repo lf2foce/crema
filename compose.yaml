@@ -41,14 +41,32 @@ x-app: &app
       max-size: "10m"
       max-file: "3"
 
+# Backups (optional): with a bucket on S3-compatible storage (Cloudflare R2, S3, B2, MinIO), both
+# Postgres servers archive every WAL segment there, encrypted, and `crema-backup` takes base backups:
+# restore to any moment. Keep CREMA_BACKUP_PASSPHRASE somewhere other than this machine; without it
+# the backups can't be read. See docs/deployment.md → Backups.
+x-postgres: &postgres
+  image: ${CREMA_POSTGRES_IMAGE:-ghcr.io/lf2foce/crema-postgres}:${CREMA_POSTGRES_TAG:-18}
+  build: deploy/postgres
+  restart: unless-stopped
+  stop_grace_period: 60s # a clean shutdown, not crash recovery on the next start
+x-backup: &backup
+  PGBACKREST_REPO1_S3_ENDPOINT: ${CREMA_BACKUP_S3_ENDPOINT:-}
+  PGBACKREST_REPO1_S3_BUCKET: ${CREMA_BACKUP_S3_BUCKET:-}
+  PGBACKREST_REPO1_S3_KEY: ${CREMA_BACKUP_S3_KEY:-}
+  PGBACKREST_REPO1_S3_KEY_SECRET: ${CREMA_BACKUP_S3_SECRET:-}
+  PGBACKREST_REPO1_CIPHER_PASS: ${CREMA_BACKUP_PASSPHRASE:-}
+
 services:
   postgres:
-    image: postgres:18-bookworm
+    <<: *postgres
     cpus: ${CREMA_DB_CPUS:-0.5}
     mem_limit: ${CREMA_DB_MEMORY:-512m}
     shm_size: 128m
-    restart: unless-stopped
     environment:
+      <<: *backup
+      PGBACKREST_STANZA: state
+      PGBACKREST_REPO1_PATH: ${CREMA_BACKUP_PATH:-/crema}/state
       POSTGRES_USER: crema
       POSTGRES_DB: crema
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
@@ -65,12 +83,14 @@ services:
   # Postgres for the apps' databases Crema creates (hosted databases). A separate server from
   # `postgres` (Crema's own state): own volume, own superuser, reachable from the internet over TLS.
   hosting:
-    image: postgres:18-bookworm
+    <<: *postgres
     cpus: ${CREMA_HOSTING_CPUS:-1}
     mem_limit: ${CREMA_HOSTING_MEMORY:-1g}
     shm_size: 256m
-    restart: unless-stopped
     environment:
+      <<: *backup
+      PGBACKREST_STANZA: hosting
+      PGBACKREST_REPO1_PATH: ${CREMA_BACKUP_PATH:-/crema}/hosting
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: ${HOSTING_SUPERUSER_PASSWORD:?Set HOSTING_SUPERUSER_PASSWORD}
       CREMA_PROVISIONER_PASSWORD: ${HOSTING_PROVISIONER_PASSWORD:?Set HOSTING_PROVISIONER_PASSWORD}

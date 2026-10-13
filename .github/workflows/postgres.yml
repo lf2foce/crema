@@ -1,0 +1,52 @@
+# The database image (deploy/postgres: PostgreSQL + pgBackRest), rebuilt only when it changes:
+# a new image restarts both databases on the next deploy, so it shouldn't change with every commit.
+# Published as ghcr.io/lf2foce/crema-postgres:18 (what compose.yaml uses), :18.<minor> and :sha-<commit>.
+name: postgres
+
+on:
+  push:
+    branches: [main]
+    paths: [deploy/postgres/**, .github/workflows/postgres.yml, .github/workflows/image.yml]
+  pull_request:
+    paths: [deploy/postgres/**]
+  workflow_dispatch:
+
+concurrency:
+  group: postgres-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    permissions: { contents: read }
+    outputs:
+      minor: ${{ steps.version.outputs.minor }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: shellcheck deploy/postgres/*.sh
+      - id: version
+        run: echo "minor=$(sed -nE 's/^FROM postgres:([0-9]+\.[0-9]+)-.*/\1/p' deploy/postgres/Dockerfile)" >> "$GITHUB_OUTPUT"
+      # a PR proves it builds and archives; main publishes it
+      - if: github.event_name == 'pull_request'
+        run: |
+          docker build -t crema-postgres:test deploy/postgres
+          docker run -d --name pg -e POSTGRES_PASSWORD=x crema-postgres:test
+          until docker exec pg pg_isready -U postgres; do sleep 1; done
+          docker exec pg pgbackrest version
+
+  image:
+    needs: check
+    if: github.event_name != 'pull_request'
+    uses: ./.github/workflows/image.yml
+    permissions: { contents: read, packages: write, id-token: write, attestations: write }
+    with:
+      name: crema-postgres
+      context: deploy/postgres
+      title: Crema PostgreSQL
+      description: PostgreSQL 18 with pgBackRest, for Crema's Compose bundle (point-in-time backups to S3-compatible storage)
+      tags: |
+        type=raw,value=18
+        type=raw,value=${{ needs.check.outputs.minor }}
+        type=sha,prefix=sha-,format=short
