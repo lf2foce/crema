@@ -549,6 +549,9 @@ table.plain td.mono { font-size: var(--fs-ui); }
 .sql-side h4 { margin: var(--sp-3) 0 0; font: 400 var(--fs-label) var(--mono); text-transform: uppercase; color: var(--muted); padding: 0 var(--sp-2); }
 .sql-side .input { height: 32px; font-size: var(--fs-ui); }
 .sql-side .side-head { margin-top: var(--sp-4); }
+.sql-side .branch-item .sql-item { padding-left: var(--sp-6); }
+.branch-list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--sp-2); }
+.branch-list li { display: flex; gap: var(--sp-3); align-items: baseline; font-size: var(--fs-ui); }
 .sql-side .side-head h4 { margin: 0; }
 .sql-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 1px; }
 .sql-list li { display: flex; align-items: center; border-radius: var(--radius); }

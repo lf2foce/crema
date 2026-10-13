@@ -7,9 +7,13 @@ const ADMIN_URL = "postgresql://localhost:5432/postgres";
 const DB = "e2e_shop";
 const psql = (sql: string) => execFileSync("psql", ["-d", "postgres", "-Atc", sql], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
 const cleanup = () => {
-  psql(`DROP DATABASE IF EXISTS ${DB} WITH (FORCE)`);
-  psql(`DROP ROLE IF EXISTS ${DB}_owner`); psql(`DROP ROLE IF EXISTS ${DB}_crema`);
+  for (const d of [`${DB}_dev`, DB]) {
+    psql(`DROP DATABASE IF EXISTS ${d} WITH (FORCE)`);
+    psql(`DROP ROLE IF EXISTS ${d}_owner`); psql(`DROP ROLE IF EXISTS ${d}_crema`);
+  }
 };
+// as the app would: tables belong to the database's owner login
+const asOwner = (db: string, sql: string) => execFileSync("psql", ["-U", `${db}_owner`, "-d", db, "-Atc", sql], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
 let provisioners: string[] = [];
 
 test.beforeAll(() => {
@@ -77,6 +81,25 @@ test("add a server → create a database → connect → delete → remove the s
   await expect(page.getByText("on db.example.com")).toBeVisible();
   await expect(page.locator(".conn-code")).toContainText(`postgresql://${DB}_owner:••••••••••••@db.example.com:6543/${DB}?sslmode=require`);
   expect(psql(`SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname = '${DB}'`)).toBe(`${DB}_owner`);
+
+  // a dev branch: a snapshot of main, copied by the worker, with its own login
+  asOwner(DB, "CREATE TABLE orders (id serial PRIMARY KEY, total int); INSERT INTO orders (total) VALUES (10), (20)");
+  await page.getByRole("button", { name: "New branch" }).click();
+  await expect(page.getByLabel("Branch name")).toHaveValue("dev");
+  await expect(page.getByText(`Database ${DB}_dev`)).toBeVisible();
+  await page.getByRole("button", { name: "Create branch" }).click();
+  await expect(page.getByRole("heading", { name: "E2E Shop · dev" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Copied from E2E Shop" })).toBeVisible();
+  await expect(page.getByText(/Schema and data, .*ago|Schema and data, just now/)).toBeVisible({ timeout: 60_000 });
+  expect(asOwner(`${DB}_dev`, "SELECT count(*) FROM orders")).toBe("2");
+  await expect(page.locator(".conn-code")).toContainText(`postgresql://${DB}_dev_owner:`);
+  // main can't be deleted while it has branches; delete the branch first
+  await page.getByRole("button", { name: /^E2E Shop/ }).click();
+  await expect(page.getByText("Delete its branches first (dev).")).toBeVisible();
+  await page.getByRole("button", { name: /^↳ dev/ }).click();
+  page.once("dialog", (d) => d.accept(`${DB}_dev`));
+  await page.getByRole("button", { name: "Delete", exact: true }).click();
+  await expect(page.getByText(`Deleted ${DB}_dev.`)).toBeVisible();
 
   // a server with databases can't be removed
   await page.getByRole("button", { name: /^db\.example\.com/ }).click();

@@ -135,7 +135,7 @@ export class Hosting {
    * Creates the database and both roles with the given passwords, or finishes an earlier attempt
    * that carried the same token (a crash part-way can be retried). Never adopts anything else.
    */
-  async create(dbName: string, p: { token: string; ownerPassword: string; readerPassword: string }): Promise<{ owner: string; reader: string }> {
+  async create(dbName: string, p: { token: string; ownerPassword: string; readerPassword: string; limits?: { owner: number; reader: number } }): Promise<{ owner: string; reader: string }> {
     if (!NAME.test(dbName) || dbNameProblem(dbName)) throw new HostingError(`Invalid database name “${dbName}”.`);
     if (!/^[0-9a-f-]{36}$/.test(p.token)) throw new HostingError("Invalid provisioning token.");
     const owner = `${dbName}_owner`, reader = `${dbName}_crema`, mark = literal(p.token);
@@ -157,8 +157,9 @@ export class Hosting {
             : `CREATE ROLE ${quoteIdent(name)} LOGIN PASSWORD ${literal(pw)} NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS CONNECTION LIMIT ${limit}`);
           if (!exists) await c.query(`COMMENT ON ROLE ${quoteIdent(name)} IS ${mark}`);
         };
-        await role(owner, p.ownerPassword, 20, own.owner.exists); madeOwner = !own.owner.exists;
-        await role(reader, p.readerPassword, 5, own.reader.exists); madeReader = !own.reader.exists;
+        const limits = p.limits ?? { owner: 20, reader: 5 };
+        await role(owner, p.ownerPassword, limits.owner, own.owner.exists); madeOwner = !own.owner.exists;
+        await role(reader, p.readerPassword, limits.reader, own.reader.exists); madeReader = !own.reader.exists;
         await c.query(`ALTER ROLE ${quoteIdent(reader)} SET default_transaction_read_only = on`);
         await c.query(`ALTER ROLE ${quoteIdent(owner)} SET idle_in_transaction_session_timeout = '10min'`);
         // CREATE DATABASE can't run inside a transaction; a failure past this point is cleaned up below
@@ -224,6 +225,23 @@ export class Hosting {
           dropped.push(x.name);
         }
         return { dropped, left };
+      } finally {
+        await c.query("SELECT pg_advisory_unlock(hashtext($1))", [`crema.hosting:${dbName}`]).catch(() => {});
+      }
+    });
+  }
+
+  /** Drops only this source's database (its roles stay), e.g. before copying a branch again. */
+  async dropDatabase(dbName: string, token: string): Promise<boolean> {
+    if (!NAME.test(dbName)) throw new HostingError(`Invalid database name “${dbName}”.`);
+    return this.admin(async (c) => {
+      await c.query("SELECT pg_advisory_lock(hashtext($1))", [`crema.hosting:${dbName}`]);
+      try {
+        const own = await this.ownership(c, dbName, token);
+        if (own.database.exists && !own.database.ours) throw new HostingError(`${dbName} isn’t one Crema created for this database.`);
+        if (!own.database.exists) return false;
+        await c.query(`DROP DATABASE ${quoteIdent(dbName)} WITH (FORCE)`);
+        return true;
       } finally {
         await c.query("SELECT pg_advisory_unlock(hashtext($1))", [`crema.hosting:${dbName}`]).catch(() => {});
       }

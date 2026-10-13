@@ -242,6 +242,7 @@ export class Crema {
     const source = await this.reg.source(this.scope.workspaceId, id);
     if (!source || source.kind !== "hosted") throw new CremaError("Hosted database not found.", 404);
     if (source.status === "ready") throw new CremaError("This database is already ready.", 409);
+    if (source.parentId) return this.resetBranch(id, actor);
     const h = await this.hostingFor(source.serverId);
     await this.provision(h, source, actor);
     return (await this.reg.source(this.scope.workspaceId, id))!;
@@ -251,16 +252,22 @@ export class Crema {
    * The token and both passwords are stored (sealed) before anything exists on the server, so an
    * interrupted attempt can be resumed and whatever it created is provably this source's.
    */
-  private async provision(h: Hosting, source: Source, actor: string) {
-    const dbName = source.dbName!;
+  /** The token and passwords of a hosted source, stored (sealed) before anything exists on the server. */
+  private async provisionSecrets(source: Source) {
     const stored = await this.reg.sourceSecrets(source.id);
     const open = (v: string | null) => { try { return v ? unseal(v) : ""; } catch { return ""; } };
     const token = stored.provisionToken ?? randomUUID();
     const ownerPassword = open(stored.ownerPassword) || password(), readerPassword = open(stored.readerPassword) || password();
     await this.reg.updateSource(source.id, { status: "provisioning", error: null, provisionToken: token, ownerPassword: seal(ownerPassword), readerPassword: seal(readerPassword) });
+    return { token, ownerPassword, readerPassword };
+  }
+
+  private async provision(h: Hosting, source: Source, actor: string) {
+    const dbName = source.dbName!;
+    const secrets = await this.provisionSecrets(source);
     try {
-      const r = await h.create(dbName, { token, ownerPassword, readerPassword });
-      await this.reg.updateSource(source.id, { status: "ready", error: null, readOnly: true, connection: seal(h.internalUrl(dbName, r.reader, readerPassword)) });
+      const r = await h.create(dbName, secrets);
+      await this.reg.updateSource(source.id, { status: "ready", error: null, readOnly: true, connection: seal(h.internalUrl(dbName, r.reader, secrets.readerPassword)) });
     } catch (e) {
       const message = hostingError(e).message;
       // Hosting.create never adopts what isn't this source's, and cleans up only what this attempt made.
@@ -269,6 +276,86 @@ export class Crema {
       throw new CremaError(`Could not create ${dbName}: ${message}`, 502);
     }
     await this.ev(actor, "source.provisioned", `source:${source.slug}`, { dbName }, source);
+  }
+
+  // ---------- branches: a project's main database and copies of it (dev, staging…) ----------
+
+  /**
+   * A branch of a hosted database: its own database on the same server (`<main>_<branch>`, own
+   * logins, fewer connections), filled by the worker with a consistent snapshot of main, schema and
+   * data or schema only. Not instant and not copy-on-write: it copies.
+   */
+  async createBranch(parentId: number, input: { branch?: string | null; copy?: string | null }, actor: string) {
+    const parent = await this.reg.source(this.scope.workspaceId, parentId);
+    if (!parent || parent.kind !== "hosted" || !parent.dbName) throw new CremaError("Hosted database not found.", 404);
+    if (parent.parentId) throw new CremaError("Branch from the project's main database.", 400);
+    if (parent.status !== "ready") throw new CremaError(`${parent.name} isn’t ready yet.`, 409);
+    const branch = (input.branch ?? "dev").trim().toLowerCase();
+    if (!/^[a-z][a-z0-9_]{0,15}$/.test(branch) || branch === "main") throw new CremaError("A branch name is a short word: lowercase letters, digits, underscores (not “main”).");
+    const copy = input.copy === "schema" ? "schema" : "data";
+    const dbName = `${parent.dbName}_${branch}`;
+    const problem = dbNameProblem(dbName);
+    if (problem) throw new CremaError(`${dbName}: ${problem}`);
+    const siblings = (await this.reg.sources(this.scope.workspaceId)).filter((s) => s.parentId === parent.id);
+    if (siblings.some((s) => s.branch === branch)) throw new CremaError(`${parent.name} already has a “${branch}” branch.`, 409);
+    const h = await this.hostingFor(parent.serverId);
+    const taken = await h.taken(dbName).catch((e) => { throw hostingError(e); });
+    if (taken.length) throw new CremaError(`“${taken[0]}” already exists on this server.`, 409);
+    const source = await this.reg.addSource(this.scope.workspaceId, {
+      slug: await this.reg.freeSlug(this.scope.workspaceId, `${parent.slug}_${branch}`), name: parent.name,
+      kind: "hosted", status: "provisioning", dbName, readOnly: true, serverId: parent.serverId, parentId: parent.id, branch,
+    }, actor);
+    await this.reg.updateSource(source.id, { branchCopy: copy });
+    await this.queueBranchCopy(source, actor, "branch.created");
+    return (await this.reg.source(this.scope.workspaceId, source.id))!;
+  }
+
+  /** Throw away a branch's changes: drop its database and copy main again. Its logins stay the same. */
+  async resetBranch(id: number, actor: string, copy?: string | null) {
+    const source = await this.reg.source(this.scope.workspaceId, id);
+    if (!source || !source.parentId) throw new CremaError("Only a branch can be reset; the main database never is.", 400);
+    if (source.status === "provisioning") throw new CremaError("This branch is already being copied.", 409);
+    if (copy === "schema" || copy === "data") await this.reg.updateSource(id, { branchCopy: copy });
+    await this.reg.updateSource(id, { status: "provisioning", error: null });
+    await this.queueBranchCopy(source, actor, "branch.reset");
+    return (await this.reg.source(this.scope.workspaceId, id))!;
+  }
+
+  private async queueBranchCopy(source: Source, actor: string, action: string) {
+    const { enqueueBranchCopy } = await import("./jobs");
+    await enqueueBranchCopy(this.reg, { workspaceId: this.scope.workspaceId, sourceId: source.id });
+    await this.ev(actor, action, `source:${source.slug}`, { branch: source.branch }, source);
+  }
+
+  /**
+   * The worker's job: (re)create the branch's database with its stored logins, then copy main into it.
+   * Safe to run again after a crash: it starts from an empty database every time.
+   */
+  async copyBranch(id: number) {
+    const source = await this.reg.source(this.scope.workspaceId, id);
+    if (!source || !source.parentId || !source.dbName) return; // removed meanwhile
+    const parent = await this.reg.source(this.scope.workspaceId, source.parentId);
+    try {
+      if (!parent?.dbName || parent.status !== "ready") throw new CremaError("Its main database isn’t ready.");
+      const h = await this.hostingFor(source.serverId);
+      const secrets = await this.provisionSecrets(source);
+      let parentOwner = "";
+      try { const p = await this.reg.sourceSecrets(parent.id); parentOwner = p.ownerPassword ? unseal(p.ownerPassword) : ""; } catch { /* key changed */ }
+      if (!parentOwner) throw new CremaError("Crema can’t read the main database’s login (the encryption key may have changed).");
+      await h.dropDatabase(source.dbName, secrets.token);
+      const r = await h.create(source.dbName, { ...secrets, limits: { owner: 10, reader: 3 } });
+      const { cloneDatabase } = await import("./clone");
+      const copy = (await this.reg.sourceSecrets(id)).branchCopy ?? "data";
+      await cloneDatabase(h.internalUrl(parent.dbName, `${parent.dbName}_owner`, parentOwner), h.internalUrl(source.dbName, r.owner, secrets.ownerPassword), { schemaOnly: copy === "schema" });
+      await this.reg.updateSource(id, { status: "ready", error: null, readOnly: true, branchedAt: new Date().toISOString(), connection: seal(h.internalUrl(source.dbName, r.reader, secrets.readerPassword)) });
+      tablesCache.delete(id);
+      await this.ev("crema", "branch.copied", `source:${source.slug}`, { from: parent.slug, copy }, source);
+    } catch (e) {
+      const message = e instanceof CremaError ? e.message : hostingError(e).message;
+      await this.reg.updateSource(id, { status: "failed", error: message });
+      await this.ev("crema", "branch.copy_failed", `source:${source.slug}`, { error: message }, source);
+      throw e;
+    }
   }
 
   /** Host, user, password… for one of a hosted database's logins. Admin only (enforced by the route). */
@@ -311,6 +398,8 @@ export class Crema {
   async removeSource(id: number, actor: string) {
     const source = await this.reg.source(this.scope.workspaceId, id);
     if (!source) throw new CremaError("Database not found.", 404);
+    const branches = (await this.reg.sources(this.scope.workspaceId)).filter((s) => s.parentId === id);
+    if (branches.length) throw new CremaError(`Delete its branches first (${branches.map((b) => b.branch).join(", ")}).`, 409);
     if (source.kind === "hosted" && source.dbName) {
       const { provisionToken } = await this.reg.sourceSecrets(id);
       if (provisionToken) {

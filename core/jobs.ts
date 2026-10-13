@@ -7,6 +7,7 @@ import { Registry } from "./registry";
 
 export const DISCOVERY_QUEUE = "crema-discovery";
 export const DRIFT_QUEUE = "crema-drift";
+export const BRANCH_QUEUE = "crema-branch";
 export type DiscoveryTask = { workspaceId: string; sourceId: number; runId: number; hint: string | null; focus: string | null };
 export const discoveryPolicy = { retryLimit: 2, retryDelay: 10, retryBackoff: true, retryDelayMax: 60, expireInSeconds: 1800, heartbeatSeconds: 60 };
 const runtimes: Map<string, Promise<PgBoss>> = ((globalThis as any).__cremaJobs ??= new Map());
@@ -27,6 +28,8 @@ export async function jobs(reg: Registry): Promise<PgBoss> {
         await boss.start();
         await boss.createQueue(DISCOVERY_QUEUE, discoveryPolicy);
         await boss.createQueue(DRIFT_QUEUE, { retryLimit: 2, retryDelay: 30, retryBackoff: true, expireInSeconds: 900, heartbeatSeconds: 60 });
+        // copying a branch: one retry (it restarts from an empty database), generous expiry for big copies
+        await boss.createQueue(BRANCH_QUEUE, { retryLimit: 1, retryDelay: 30, expireInSeconds: 3600, heartbeatSeconds: 60 });
         return boss;
       } catch (error) { await boss.stop().catch(() => {}); throw error; }
     })();
@@ -124,5 +127,23 @@ export async function startDriftWorker(reg: Registry, cron = process.env.CREMA_D
       const result = await new Crema(reg, { workspaceId: job.data.workspaceId, source: null }).checkDrift();
       if (result.errors.length) throw new Error(`Drift checks failed for ${result.errors.length} source(s); see audit.`);
     }
+  });
+}
+
+export type BranchTask = { workspaceId: string; sourceId: number };
+
+/** Queue a branch copy; the source row already says "provisioning". */
+export async function enqueueBranchCopy(reg: Registry, task: BranchTask) {
+  const boss = await jobs(reg);
+  // one copy per branch at a time; a second request while one is queued is the same job
+  const id = await boss.send(BRANCH_QUEUE, task, { singletonKey: `branch:${task.sourceId}` });
+  return id;
+}
+
+export async function startBranchWorker(reg: Registry) {
+  const boss = await jobs(reg);
+  await boss.work<BranchTask>(BRANCH_QUEUE, { batchSize: 1, localConcurrency: 1, pollingIntervalSeconds: 2 }, async (batch) => {
+    const { Crema } = await import("./service");
+    for (const job of batch) await new Crema(reg, { workspaceId: job.data.workspaceId, source: null }).copyBranch(job.data.sourceId);
   });
 }

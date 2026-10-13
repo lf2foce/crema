@@ -3,13 +3,14 @@
 import { loadLocalEnv } from "./env";
 loadLocalEnv();
 const { Registry } = await import("../core/registry");
-const { startDiscoveryWorker, startDriftWorker, closeJobs } = await import("../core/jobs");
+const { startBranchWorker, startDiscoveryWorker, startDriftWorker, closeJobs } = await import("../core/jobs");
 const { closeDatabases } = await import("../core/db");
 const { closePools } = await import("../core/warehouse");
 const reg = new Registry();
 await startDiscoveryWorker(reg);
 await startDriftWorker(reg);
-console.log("Crema discovery worker ready");
+await startBranchWorker(reg);
+console.log("Crema worker ready: discovery, drift checks, branch copies");
 let stopping = false;
 async function stop() {
   if (stopping) return; stopping = true;

@@ -32,7 +32,9 @@ export function Databases({ state, selected, server, notify, reload }: { state: 
   const [creating, setCreating] = useState(false);
   const [adding, setAdding] = useState(false);
   const admin = state.me?.role === "admin";
-  const list = state.sources;
+  // a project's branches right under its main database
+  const list = [...state.sources.filter((d) => !d.parentId).flatMap((d) => [d, ...state.sources.filter((b) => b.parentId === d.id)]),
+    ...state.sources.filter((b) => b.parentId && !state.sources.some((d) => d.id === b.parentId))];
   const servers = state.servers;
   const srv = server ? servers.find((v) => v.id === server) ?? null : null;
   const db = srv ? null : list.find((d) => d.id === selected) ?? list[0] ?? null;
@@ -53,10 +55,10 @@ export function Databases({ state, selected, server, notify, reload }: { state: 
         <h4>{list.length} database{list.length === 1 ? "" : "s"}</h4>
         <ul className="sql-list">
           {list.map((d) => (
-            <li key={d.id} className={`saved ${d.id === db?.id ? "on" : ""}`}>
+            <li key={d.id} className={`saved ${d.id === db?.id ? "on" : ""} ${d.parentId ? "branch-item" : ""}`}>
               <button className="sql-item" onClick={() => go(d.id)}>
-                <span className="ellipsis">{d.name}</span>
-                <span className="faint">{d.kind === "hosted" ? `hosted · ${size(d.sizeBytes)}` : "connected"}{d.status !== "ready" ? ` · ${d.status}` : ""}{d.metrics ? ` · ${d.metrics} metric${d.metrics > 1 ? "s" : ""}` : ""}</span>
+                <span className="ellipsis">{d.parentId ? <><span className="faint">↳ </span>{d.branch}</> : d.name}</span>
+                <span className="faint">{d.parentId ? `branch · ${size(d.sizeBytes)}` : d.kind === "hosted" ? `hosted · ${size(d.sizeBytes)}` : "connected"}{d.status !== "ready" ? ` · ${d.status}` : ""}{d.metrics ? ` · ${d.metrics} metric${d.metrics > 1 ? "s" : ""}` : ""}</span>
               </button>
             </li>
           ))}
@@ -78,7 +80,7 @@ export function Databases({ state, selected, server, notify, reload }: { state: 
 
       <main className="hosted-main">
         {srv ? <ServerDetail key={srv.id} server={srv} notify={notify} onChanged={() => changed()} />
-          : db ? <Detail key={db.id} db={db} server={servers.find((v) => v.id === db.serverId) ?? null} admin={admin} notify={notify} onChanged={changed} /> : (
+          : db ? <Detail key={db.id} db={db} all={state.sources} server={servers.find((v) => v.id === db.serverId) ?? null} admin={admin} notify={notify} onChanged={changed} /> : (
           <div className="hosted-empty">
             <h1 className="title">Your databases</h1>
             <p className="meaning">Connect a database you already have, or create a new one for an app — and let Crema find and certify its metrics.</p>
@@ -210,7 +212,7 @@ function ServerDetail({ server, notify, onChanged }: { server: ServerInfo; notif
   );
 }
 
-function Detail({ db, server, admin, notify, onChanged }: { db: SourceInfo; server: ServerInfo | null; admin: boolean; notify: (t: string, e?: boolean) => void; onChanged: (id?: number) => void }) {
+function Detail({ db, all, server, admin, notify, onChanged }: { db: SourceInfo; all: SourceInfo[]; server: ServerInfo | null; admin: boolean; notify: (t: string, e?: boolean) => void; onChanged: (id?: number) => void }) {
   const [role, setRole] = useState<Role>("owner");
   const [format, setFormat] = useState("url");
   const [reveal, setReveal] = useState(false);
@@ -218,6 +220,15 @@ function Detail({ db, server, admin, notify, onChanged }: { db: SourceInfo; serv
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const hosted = db.kind === "hosted";
+  const parent = db.parentId ? all.find((d) => d.id === db.parentId) ?? null : null;
+  const branches = all.filter((d) => d.parentId === db.id);
+  // a branch being copied (by the worker) finishes on its own: look again until it does
+  const copying = db.status === "provisioning" || branches.some((b) => b.status === "provisioning");
+  useEffect(() => {
+    if (!copying) return;
+    const t = setInterval(() => onChanged(db.id), 3000);
+    return () => clearInterval(t);
+  }, [copying, db.id, onChanged]);
   const ready = db.status === "ready" && !db.missing;
 
   const fetchConn = useCallback(async () => {
@@ -234,6 +245,11 @@ function Detail({ db, server, admin, notify, onChanged }: { db: SourceInfo; serv
   const reset = () => {
     if (!window.confirm(`New password for the ${role === "owner" ? "app" : "Crema read-only"} login of ${db.dbName}? Anything using the old one loses access now.`)) return;
     act("reset", async () => { setConn(await api<Conn>(`/api/sources/${db.id}/reset-password`, { body: { role }, source: null })); setReveal(true); notify("New password issued."); });
+  };
+  const resetBranch = () => {
+    const typed = window.prompt(`Reset ${db.branch} from ${parent?.name}? Everything changed in this branch is lost. Type “${db.branch}” to confirm:`);
+    if (typed !== db.branch) { if (typed !== null) notify("The name didn't match; nothing was reset.", true); return; }
+    act("resetb", async () => { await api(`/api/sources/${db.id}/reset`, { body: {}, source: null }); notify(`Copying ${parent?.name} into ${db.branch}…`); onChanged(db.id); });
   };
   const retry = () => act("retry", async () => { await api(`/api/sources/${db.id}/retry`, { body: {}, source: null }); notify(`${db.dbName} is ready.`); onChanged(db.id); });
   const remove = () => {
@@ -271,10 +287,10 @@ function Detail({ db, server, admin, notify, onChanged }: { db: SourceInfo; serv
 
   return (
     <div className="hosted-detail">
-      <div className="eyebrow">Hosted database</div>
-      <h1 className="title">{db.name}</h1>
-      {db.status === "provisioning" && <div className="callout small row"><span className="grow">Being created…</span>{admin && Date.now() - Date.parse(db.createdAt) > 120_000 && <button className="btn sm" disabled={busy === "retry"} onClick={retry}>Taking long? Retry</button>}</div>}
-      {db.status === "failed" && <div className="callout warn small row"><span className="grow">Creating it failed: {db.error}</span>{admin && <button className="btn sm" disabled={busy === "retry"} onClick={retry}>Retry</button>}</div>}
+      <div className="eyebrow">{parent ? <>Branch <span className="mono">{db.branch}</span> of <a href={`#databases/${parent.id}`}>{parent.name}</a></> : branches.length ? "Hosted database · main" : "Hosted database"}</div>
+      <h1 className="title">{parent ? `${db.name} · ${db.branch}` : db.name}</h1>
+      {db.status === "provisioning" && <div className="callout small row"><span className="grow">{parent ? `Copying ${db.branchCopy === "schema" ? "the schema" : "schema and data"} from ${parent.name}… this takes as long as the copy does.` : "Being created…"}</span>{admin && Date.now() - Date.parse(db.createdAt) > 120_000 && <button className="btn sm" disabled={busy === "retry"} onClick={retry}>Taking long? Retry</button>}</div>}
+      {db.status === "failed" && <div className="callout warn small row"><span className="grow">{parent ? "Copying it failed" : "Creating it failed"}: {db.error}</span>{admin && <button className="btn sm" disabled={busy === "retry"} onClick={retry}>Retry</button>}</div>}
       <div className="hosted-stats">
         <div><span>Database</span><b className="mono">{db.dbName}</b><small>on {server?.name ?? "a removed server"}</small></div>
         <div><span>Size</span><b>{size(db.sizeBytes)}</b></div>
@@ -309,6 +325,13 @@ function Detail({ db, server, admin, notify, onChanged }: { db: SourceInfo; serv
         {role === "reader" && <p className="use-note m-0">Read-only: this login can’t change anything, including tables your app creates later.</p>}
       </section>}
 
+      {!parent && db.status === "ready" && <Branches main={db} branches={branches} admin={admin} notify={notify} onChanged={onChanged} />}
+      {parent && <section className="hosted-card">
+        <div className="hosted-card-head"><h2>Copied from {parent.name}</h2></div>
+        <p className="m-0 muted">{db.branchCopy === "schema" ? "Schema only" : "Schema and data"}{db.branchedAt ? `, ${ago(db.branchedAt)}` : ""}. Changes here never reach {parent.name}. Point your app’s development setup at this branch, and turn off what reaches real people there (messages, webhooks, payments, scheduled jobs): a separate database doesn’t stop the app from contacting real customers.</p>
+        {admin && <div className="row"><div className="grow"><b>Reset from {parent.name}</b><div className="small muted">Throws away everything in this branch and copies {parent.name} again. Its logins stay the same.</div></div><button className="btn" disabled={busy === "resetb" || db.status === "provisioning"} onClick={resetBranch}>Reset</button></div>}
+      </section>}
+
       {ready && <section className="hosted-card">
         <div className="hosted-card-head"><h2>Crema</h2></div>
         <div className="row"><p className="m-0 grow muted">Crema analyses it with the read-only login{db.metrics ? `: ${db.metrics} certified metric${db.metrics > 1 ? "s" : ""}` : ""}.</p><a className="btn primary" href={sourceHref(db.slug)}>Open</a></div>
@@ -317,8 +340,58 @@ function Detail({ db, server, admin, notify, onChanged }: { db: SourceInfo; serv
       {admin && <section className="hosted-card danger">
         <div className="hosted-card-head"><h2>Danger zone</h2></div>
         {ready && <div className="row"><div className="grow"><b>Reset password</b><div className="small muted">Issues a new password for the selected login. The old one stops working at once.</div></div><button className="btn" disabled={busy === "reset"} onClick={reset}>Reset password</button></div>}
-        <div className="row"><div className="grow"><b>Delete database</b><div className="small muted">Drops the database, its data and both logins. Its metrics stop being served.</div></div><button className="btn text-fail" disabled={busy === "delete"} onClick={remove}>Delete</button></div>
+        <div className="row"><div className="grow"><b>{parent ? "Delete branch" : "Delete database"}</b><div className="small muted">{branches.length ? `Delete its branches first (${branches.map((b) => b.branch).join(", ")}).` : "Drops the database, its data and both logins. Its metrics stop being served."}</div></div><button className="btn text-fail" disabled={busy === "delete" || branches.length > 0} onClick={remove}>Delete</button></div>
       </section>}
     </div>
+  );
+}
+
+/** A project's branches: copies of its main database, each with its own database and logins. */
+function Branches({ main, branches, admin, notify, onChanged }: { main: SourceInfo; branches: SourceInfo[]; admin: boolean; notify: (t: string, e?: boolean) => void; onChanged: (id?: number) => void }) {
+  const [creating, setCreating] = useState(false);
+  return (
+    <section className="hosted-card">
+      <div className="hosted-card-head"><h2>Branches</h2><span className="grow" />{admin && <button className="btn sm" onClick={() => setCreating(true)}>New branch</button>}</div>
+      {!branches.length ? <p className="m-0 muted">A branch is a copy of this database for development: change it, run migrations on it, reset it, without touching {main.name}. Each one is its own database with its own logins.</p> : (
+        <ul className="branch-list">
+          <li><span className="mono">main</span><span className="faint">this database · production</span></li>
+          {branches.map((b) => (
+            <li key={b.id}>
+              <a className="mono" href={`#databases/${b.id}`}>{b.branch}</a>
+              <span className="faint">{b.status === "provisioning" ? "copying…" : b.status === "failed" ? "copy failed" : `${b.branchCopy === "schema" ? "schema only" : "schema + data"}${b.branchedAt ? `, copied ${ago(b.branchedAt)}` : ""}`} · {size(b.sizeBytes)}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {creating && <NewBranch main={main} taken={branches.map((b) => b.branch!)} notify={notify} onClose={() => setCreating(false)} onCreated={(id) => { setCreating(false); onChanged(id); }} />}
+    </section>
+  );
+}
+
+function NewBranch({ main, taken, notify, onClose, onCreated }: { main: SourceInfo; taken: string[]; notify: (t: string, e?: boolean) => void; onClose: () => void; onCreated: (id: number) => void }) {
+  const [branch, setBranch] = useState(taken.includes("dev") ? "" : "dev");
+  const [copy, setCopy] = useState<"data" | "schema">("data");
+  const [busy, setBusy] = useState(false);
+  const problem = !branch ? null : !/^[a-z][a-z0-9_]{0,15}$/.test(branch) || branch === "main" ? "A short word: lowercase letters, digits, underscores (not “main”)." : taken.includes(branch) ? `There is already a “${branch}” branch.` : null;
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    try { const r = await api<{ id: number }>(`/api/sources/${main.id}/branch`, { body: { branch, copy }, source: null }); notify(`Copying ${main.name} into ${branch}…`); onCreated(r.id); }
+    catch (err) { notify((err as Error).message, true); setBusy(false); }
+  };
+  return (
+    <Modal onClose={onClose}>
+      <form className="stack" onSubmit={submit}>
+        <h2 className="schema-h m-0">New branch of {main.name}</h2>
+        <label className="field">Branch name<input className="input mono" autoFocus value={branch} onChange={(e) => setBranch(e.target.value.toLowerCase())} maxLength={16} spellCheck={false} /></label>
+        {problem ? <p className="small text-warn m-0">{problem}</p> : branch && <p className="use-note m-0">Database <span className="mono">{main.dbName}_{branch}</span>, logins <span className="mono">{main.dbName}_{branch}_owner</span> and <span className="mono">{main.dbName}_{branch}_crema</span>.</p>}
+        <div className="round-pills" role="tablist">
+          <button type="button" role="tab" aria-selected={copy === "data"} className={copy === "data" ? "on" : ""} onClick={() => setCopy("data")}>Schema + data</button>
+          <button type="button" role="tab" aria-selected={copy === "schema"} className={copy === "schema" ? "on" : ""} onClick={() => setCopy("schema")}>Schema only</button>
+        </div>
+        <p className="use-note m-0">{copy === "data" ? `A consistent snapshot of ${main.name} as it is when the copy starts; ${main.name} keeps serving meanwhile. It's a real copy: it takes time and disk in proportion to ${main.name}'s size.` : `The tables, views and functions of ${main.name}, without its rows: quick, and no customer data in development.`}</p>
+        <div className="row"><span className="grow" /><button type="button" className="btn" onClick={onClose}>Cancel</button><button className="btn primary" disabled={busy || !branch || !!problem}>{busy ? <span className="spin" /> : "Create branch"}</button></div>
+      </form>
+    </Modal>
   );
 }

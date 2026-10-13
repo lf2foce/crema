@@ -127,6 +127,64 @@ suite("step 1 safety regressions", () => {
     }
   });
 
+  it("branches a project: dev gets a snapshot of main, owned by dev, and resets back to it", async () => {
+    const svc = new Crema(new Registry(url, { schema: schema() }));
+    const { createdProvisioner } = await svc.addServer({ url: url!, name: "Local" }, "test");
+    const main = `shop_${randomUUID().replaceAll("-", "").slice(0, 6)}`;
+    const as = async <T>(role: string, db: string, fn: (c: pg.Client) => Promise<T>) => {
+      const u = new URL(url!); u.username = role; u.password = "x"; u.pathname = `/${db}`;
+      const c = new pg.Client({ connectionString: u.toString() }); await c.connect();
+      try { return await fn(c); } finally { await c.end(); }
+    };
+    const count = (role: string, db: string) => as(role, db, async (c) => (await c.query("SELECT count(*)::int AS n FROM orders")).rows[0].n);
+    try {
+      const root = await svc.createHosted("Shop", "test", null, main);
+      await as(`${main}_owner`, main, (c) => c.query("CREATE TABLE orders (id serial PRIMARY KEY, total int); INSERT INTO orders (total) VALUES (10), (20)"));
+
+      const dev = await svc.createBranch(root.id, { branch: "dev" }, "test");
+      expect(dev).toMatchObject({ status: "provisioning", dbName: `${main}_dev`, parentId: root.id, branch: "dev", branchCopy: "data" });
+      await svc.copyBranch(dev.id); // the worker's job
+      const ready = (await svc.reg.source("default", dev.id))!;
+      expect(ready.status).toBe("ready");
+      expect(ready.branchedAt).not.toBeNull();
+      expect(await count(`${main}_dev_owner`, `${main}_dev`)).toBe(2);
+      // everything in the branch belongs to the branch's owner; Crema's reader there can read it
+      expect(await as(`${main}_dev_owner`, `${main}_dev`, async (c) => (await c.query("SELECT tableowner FROM pg_tables WHERE tablename = 'orders'")).rows[0].tableowner)).toBe(`${main}_dev_owner`);
+      expect(await count(`${main}_dev_crema`, `${main}_dev`)).toBe(2);
+      // dev can't reach main's data, and main's owner can't reach dev
+      await expect(as(`${main}_dev_owner`, main, async () => {})).rejects.toThrow(/permission denied/);
+
+      // change dev, then reset: main's data again, same login
+      const login = await svc.hostedConnection(dev.id, "owner");
+      await as(`${main}_dev_owner`, `${main}_dev`, (c) => c.query("INSERT INTO orders (total) VALUES (99)"));
+      expect(await count(`${main}_owner`, main)).toBe(2); // main untouched
+      expect((await svc.resetBranch(dev.id, "test")).status).toBe("provisioning");
+      await svc.copyBranch(dev.id);
+      expect(await count(`${main}_dev_owner`, `${main}_dev`)).toBe(2);
+      expect((await svc.hostedConnection(dev.id, "owner")).password).toBe(login.password);
+
+      // schema only: the tables, none of the rows
+      const empty = await svc.createBranch(root.id, { branch: "empty", copy: "schema" }, "test");
+      await svc.copyBranch(empty.id);
+      expect(await count(`${main}_empty_owner`, `${main}_empty`)).toBe(0);
+
+      // production is protected
+      await expect(svc.resetBranch(root.id, "test")).rejects.toThrow(/main database never is/);
+      await expect(svc.removeSource(root.id, "test")).rejects.toThrow(/Delete its branches first \(dev, empty\)/);
+      await expect(svc.createBranch(root.id, { branch: "dev" }, "test")).rejects.toThrow(/already has a “dev” branch/);
+      await expect(svc.createBranch(dev.id, { branch: "x" }, "test")).rejects.toThrow(/main database/);
+
+      for (const b of [dev, empty, root]) await svc.removeSource(b.id, "test");
+      expect((await admin.query("SELECT count(*)::int AS n FROM pg_database WHERE datname LIKE $1", [`${main}%`])).rows[0].n).toBe(0);
+    } finally {
+      for (const d of [`${main}_dev`, `${main}_empty`, main]) {
+        await admin.query(`DROP DATABASE IF EXISTS ${d} WITH (FORCE)`);
+        await admin.query(`DROP ROLE IF EXISTS ${d}_owner`); await admin.query(`DROP ROLE IF EXISTS ${d}_crema`);
+      }
+      await admin.query(`DROP ROLE IF EXISTS ${createdProvisioner}`);
+    }
+  });
+
   it("checks the pinned version's tables without poisoning the current version", async () => {
     const s = schema();
     await admin.query(`CREATE SCHEMA ${s}; CREATE TABLE ${s}.old_orders (id int); CREATE TABLE ${s}.new_orders (id int); INSERT INTO ${s}.old_orders VALUES (1); INSERT INTO ${s}.new_orders VALUES (2)`);

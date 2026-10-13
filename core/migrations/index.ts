@@ -5,10 +5,12 @@ import m001 from "./001_init";
 import m002 from "./002_jobs";
 import m003 from "./003_servers";
 import m004 from "./004_provision_token";
+import m005 from "./005_branches";
 
 export const MIGRATIONS: { id: string; sql: string }[] = [
   { id: "001_init", sql: m001 },
   { id: "002_jobs", sql: m002 },
   { id: "003_servers", sql: m003 },
   { id: "004_provision_token", sql: m004 },
+  { id: "005_branches", sql: m005 },
 ];

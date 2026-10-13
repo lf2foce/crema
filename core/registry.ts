@@ -15,7 +15,7 @@ const json = (v: unknown) => (v === undefined ? null : JSON.stringify(v));
 export const DEFAULT_WORKSPACE = "default";
 
 /** Sealed secrets of a source (core/secret.ts); never part of `Source`. */
-export type SourceSecrets = { connection: string | null; ownerPassword: string | null; readerPassword: string | null; provisionToken: string | null };
+export type SourceSecrets = { connection: string | null; ownerPassword: string | null; readerPassword: string | null; provisionToken: string | null; branchCopy: "data" | "schema" | null };
 
 export class Registry {
   constructor(readonly url?: string, readonly opts: { schema?: string } = {}) {
@@ -76,7 +76,7 @@ export class Registry {
   private toSource(r: any): Source {
     return {
       id: r.id, workspaceId: r.workspace_id, slug: r.slug, name: r.name, kind: r.kind, status: r.status, error: r.error,
-      readOnly: r.read_only, writableTables: r.writable_tables, dbName: r.db_name, serverId: r.server_id ?? null, createdBy: r.created_by, createdAt: iso(r.created_at),
+      readOnly: r.read_only, writableTables: r.writable_tables, dbName: r.db_name, serverId: r.server_id ?? null, parentId: r.parent_id ?? null, branch: r.branch ?? null, branchCopy: r.branch_copy ?? null, branchedAt: r.branched_at ? iso(r.branched_at) : null, createdBy: r.created_by, createdAt: iso(r.created_at),
     };
   }
   async sources(workspaceId: string): Promise<Source[]> {
@@ -88,8 +88,8 @@ export class Registry {
     return r ? this.toSource(r) : null;
   }
   async sourceSecrets(id: number): Promise<SourceSecrets> {
-    const r = (await this.q("SELECT connection, owner_password, reader_password, provision_token FROM sources WHERE id = $1", [id]))[0];
-    return { connection: r?.connection ?? null, ownerPassword: r?.owner_password ?? null, readerPassword: r?.reader_password ?? null, provisionToken: r?.provision_token ?? null };
+    const r = (await this.q("SELECT connection, owner_password, reader_password, provision_token, branch_copy FROM sources WHERE id = $1", [id]))[0];
+    return { connection: r?.connection ?? null, ownerPassword: r?.owner_password ?? null, readerPassword: r?.reader_password ?? null, provisionToken: r?.provision_token ?? null, branchCopy: r?.branch_copy ?? null };
   }
   /** A unique slug in the workspace: `name`, then `name_2`, … */
   async freeSlug(workspaceId: string, base: string): Promise<string> {
@@ -98,18 +98,18 @@ export class Registry {
     while (taken.has(slug)) slug = `${base}_${++n}`;
     return slug;
   }
-  async addSource(workspaceId: string, s: { slug: string; name: string; kind: Source["kind"]; status?: Source["status"]; connection?: string | null; readOnly?: boolean; writableTables?: number; dbName?: string | null; serverId?: number | null }, actor: string): Promise<Source> {
+  async addSource(workspaceId: string, s: { slug: string; name: string; kind: Source["kind"]; status?: Source["status"]; connection?: string | null; readOnly?: boolean; writableTables?: number; dbName?: string | null; serverId?: number | null; parentId?: number | null; branch?: string | null }, actor: string): Promise<Source> {
     return this.tx(async (c) => {
       const r = (await c.query(
-        `INSERT INTO sources (workspace_id, slug, name, kind, status, connection, read_only, writable_tables, db_name, server_id, created_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *`,
-        [workspaceId, s.slug, s.name, s.kind, s.status ?? "ready", s.connection ?? null, s.readOnly ?? false, s.writableTables ?? 0, s.dbName ?? null, s.serverId ?? null, actor])).rows[0];
+        `INSERT INTO sources (workspace_id, slug, name, kind, status, connection, read_only, writable_tables, db_name, server_id, parent_id, branch, created_by)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING *`,
+        [workspaceId, s.slug, s.name, s.kind, s.status ?? "ready", s.connection ?? null, s.readOnly ?? false, s.writableTables ?? 0, s.dbName ?? null, s.serverId ?? null, s.parentId ?? null, s.branch ?? null, actor])).rows[0];
       await this.event({ workspaceId, sourceId: r.id }, actor, `source.${s.kind === "hosted" ? "provisioning" : "connected"}`, `source:${r.slug}`, { name: s.name, dbName: s.dbName ?? null, serverId: s.serverId ?? null }, c);
       return this.toSource(r);
     });
   }
-  async updateSource(id: number, patch: Partial<{ status: Source["status"]; error: string | null; connection: string; readOnly: boolean; writableTables: number; ownerPassword: string; readerPassword: string; provisionToken: string; name: string }>) {
-    const cols: Record<string, string> = { status: "status", error: "error", connection: "connection", readOnly: "read_only", writableTables: "writable_tables", ownerPassword: "owner_password", readerPassword: "reader_password", provisionToken: "provision_token", name: "name" };
+  async updateSource(id: number, patch: Partial<{ status: Source["status"]; error: string | null; connection: string; readOnly: boolean; writableTables: number; ownerPassword: string; readerPassword: string; provisionToken: string; name: string; branchedAt: string; branchCopy: "data" | "schema" }>) {
+    const cols: Record<string, string> = { branchedAt: "branched_at", branchCopy: "branch_copy", status: "status", error: "error", connection: "connection", readOnly: "read_only", writableTables: "writable_tables", ownerPassword: "owner_password", readerPassword: "reader_password", provisionToken: "provision_token", name: "name" };
     const sets: string[] = [], vals: unknown[] = [];
     for (const [k, v] of Object.entries(patch)) { if (v === undefined) continue; vals.push(v); sets.push(`${cols[k]} = $${vals.length}`); }
     if (sets.length) await this.q(`UPDATE sources SET ${sets.join(", ")} WHERE id = $${vals.length + 1}`, [...vals, id]);

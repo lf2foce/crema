@@ -166,6 +166,13 @@ export interface Source {
   dbName: string | null;
   /** hosted: the server it lives on */
   serverId: number | null;
+  /** a branch: the database it was copied from (its project's main), and its name ("dev") */
+  parentId: number | null;
+  branch: string | null;
+  /** a branch: what is copied from the parent */
+  branchCopy: "data" | "schema" | null;
+  /** a branch: when its data was last copied from the parent */
+  branchedAt: string | null;
   createdBy: string;
   createdAt: string;
 }

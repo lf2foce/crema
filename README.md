@@ -96,6 +96,12 @@ On PostgreSQL 16+ a role with `CREATEROLE` can only change or drop roles it crea
 
 Use a server of its own, not the one in `DATABASE_URL`: apps' load and disk use would hit Crema's state, app databases must be reachable from the internet while Crema's state shouldn't be, and cluster-level restores would rewind both. Serve it over TLS with `scram-sha-256` in `pg_hba.conf`, and back it up at the cluster level (e.g. pgBackRest). **New database** needs no setup when the installation has its own server: the Compose bundle's `hosting` service (`CREMA_BUNDLED_SERVER_URL`, a provisioner login), or in development the server in `DATABASE_URL`; it's added the first time a database is created. Production never uses Crema's state server. Not yet: branching, per-database backups, size quotas, connection pooling.
 
+### Branches
+
+A hosted database is a project's **main** branch. **New branch** (e.g. `dev`) makes another database on the same server, `<main>_<branch>` with its own logins (fewer connections), and the worker fills it with a consistent snapshot of main: `pg_dump` (one repeatable-read transaction, main keeps serving) piped into `pg_restore` as the branch's owner, so every table belongs to the branch. Choose **schema + data** or **schema only** (no customer rows in development). **Reset from main** drops the branch's database and copies again; its connection string doesn't change.
+
+It's a copy, not Neon's copy-on-write: time and disk grow with main's size. Main is never reset, and can't be deleted while it has branches. A separate database doesn't stop a development app from messaging real customers: turn off outbound messages, webhooks, payments and cron there.
+
 ## What Crema checks (without the model)
 
 Each proposed definition is executed and inspected by code before you see it, and again at the moment you certify it:
