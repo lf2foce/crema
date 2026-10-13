@@ -3,7 +3,7 @@ import "./fonts.css";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Creama",
+  title: "Crema",
   description: "Connect Postgres. AI proposes your business metrics with evidence. A person certifies what’s true.",
 };
 

@@ -1,12 +1,12 @@
 # Schema-only model boundary
 
-Creama uses Vercel AI SDK `generateText` with `Output.object` and application-side
+Crema uses Vercel AI SDK `generateText` with `Output.object` and application-side
 Zod validation. There is no JSON-mode fallback, text parsing fallback, tool-based
 schema emulation, or automatic provider/model switching. Native schema output
 guarantees a shape, **not correct business meaning**; evidence checks and human
 certification are still required.
 
-Set `CREAMA_PROVIDER`, `CREAMA_MODEL` and the matching key in your untracked local
+Set `CREMA_PROVIDER`, `CREMA_MODEL` and the matching key in your untracked local
 environment. Google remains the default (`gemini-3.8-flash`). Other providers
 require an explicit model. Supported model families are deliberately restricted
 in `core/model.ts`; arbitrary names and modalities are rejected before a call.
@@ -37,5 +37,5 @@ timeout and an 8192-token output limit. Usage from failed schema attempts is cou
 reasoning tokens are not counted twice. Provider payloads are not included in
 user-facing errors. Keys never become client-side variables.
 
-OpenAI may remain unconfigured until its key is supplied. Creama never borrows a
+OpenAI may remain unconfigured until its key is supplied. Crema never borrows a
 different provider's credentials to make a missing configuration appear valid.

@@ -15,7 +15,7 @@ export function Overview({ state, reload, notify, back }: { state: AppState; rel
     <div className="page narrow">
       <div className="eyebrow"><span className="chip accent">Inferred by {u?.model ?? state.model.name}</span>{u && <span>{ago(u.at)}</span>}</div>
       <h1 className="title">How we read your business</h1>
-      <p className="meaning">{u?.summary ?? "Run discovery to see how Creama reads your schema."}</p>
+      <p className="meaning">{u?.summary ?? "Run discovery to see how Crema reads your schema."}</p>
 
       {u && (
         <div className="section">
@@ -42,7 +42,7 @@ export function Overview({ state, reload, notify, back }: { state: AppState; rel
           e.preventDefault();
           try { await api("/api/discover", { body: { hint: hint.trim() || null } }); reload(); } catch (err) { notify((err as Error).message, true); }
         }}>
-          <textarea rows={3} className="prose" placeholder="Tell Creama what it got wrong, e.g. “accounts on the enterprise plan are billed offline” or “a customer is an account with at least one paid invoice”."
+          <textarea rows={3} className="prose" placeholder="Tell Crema what it got wrong, e.g. “accounts on the enterprise plan are billed offline” or “a customer is an account with at least one paid invoice”."
             value={hint} onChange={(e) => setHint(e.target.value)} />
           <div className="row"><span className="grow faint small">Open proposals are replaced. Certified metrics are never touched.</span><button className="btn">{hint.trim() ? "Re-discover with this context" : "Re-discover"}</button></div>
         </form>
@@ -55,7 +55,7 @@ export function Overview({ state, reload, notify, back }: { state: AppState; rel
           <Code>{`GET ${origin}/api/v1/metrics                      # certified metrics + definitions
 GET ${origin}/api/v1/metrics/:database/:key           # one contract, history, audit trail
 GET ${origin}/api/v1/metrics/:database/:key/values?grain=month&from=2026-01-01&version=1`}</Code>
-          <p className="muted mb-0">Set <span className="mono">CREAMA_API_TOKEN</span> to require a bearer token. MCP: <span className="mono">npx tsx bin/creama.ts mcp</span>.</p>
+          <p className="muted mb-0">Set <span className="mono">CREMA_API_TOKEN</span> to require a bearer token. MCP: <span className="mono">npx tsx bin/crema.ts mcp</span>.</p>
         </div>
       </div>
 
@@ -92,7 +92,7 @@ GET ${origin}/api/v1/metrics/:database/:key/values?grain=month&from=2026-01-01&v
       )}
 
       <div className="section row">
-        <span className="grow faint small"><span className="mono">{state.source?.name}</span> · {state.source?.kind === "hosted" ? "hosted by Creama" : "connected"}</span>
+        <span className="grow faint small"><span className="mono">{state.source?.name}</span> · {state.source?.kind === "hosted" ? "hosted by Crema" : "connected"}</span>
         <a className="btn sm ghost" href={`/#databases/${state.source?.id}`}>Manage in Databases</a>
       </div>
 

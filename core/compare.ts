@@ -30,7 +30,7 @@ export async function compare(wh: Warehouse, candidates: Candidate[], schema: Sc
         diffs.push(await diffMembers(wh, A, B, a, b, ta, schema, w));
       } catch (e) {
         // a failing diff must not hide the comparison of values
-        if (process.env.CREAMA_DEBUG) console.error("diff failed", e);
+        if (process.env.CREMA_DEBUG || process.env.CREAMA_DEBUG) console.error("diff failed", e);
       }
     }
   }

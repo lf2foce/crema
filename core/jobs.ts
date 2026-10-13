@@ -1,17 +1,17 @@
-// Persistent discovery queue. Enqueue and the run record commit together in Creama's state DB.
+// Persistent discovery queue. Enqueue and the run record commit together in Crema's state DB.
 // Workers retry the whole discovery, not an in-flight Gemini request. No customer credentials
 // or profile data go into queue payloads.
 import { randomUUID } from "node:crypto";
 import { PgBoss, type JobWithMetadata } from "pg-boss";
 import { Registry } from "./registry";
 
-export const DISCOVERY_QUEUE = "creama-discovery";
-export const DRIFT_QUEUE = "creama-drift";
+export const DISCOVERY_QUEUE = "crema-discovery";
+export const DRIFT_QUEUE = "crema-drift";
 export type DiscoveryTask = { workspaceId: string; sourceId: number; runId: number; hint: string | null; focus: string | null };
 export const discoveryPolicy = { retryLimit: 2, retryDelay: 10, retryBackoff: true, retryDelayMax: 60, expireInSeconds: 1800, heartbeatSeconds: 60 };
-const runtimes: Map<string, Promise<PgBoss>> = ((globalThis as any).__creamaJobs ??= new Map());
+const runtimes: Map<string, Promise<PgBoss>> = ((globalThis as any).__cremaJobs ??= new Map());
 
-export function queueSchema(reg: Registry) { return reg.opts.schema ? `${reg.opts.schema}_jobs` : "creama_jobs"; }
+export function queueSchema(reg: Registry) { return reg.opts.schema ? `${reg.opts.schema}_jobs` : "crema_jobs"; }
 
 export async function jobs(reg: Registry): Promise<PgBoss> {
   await reg.db.ready;
@@ -22,7 +22,7 @@ export async function jobs(reg: Registry): Promise<PgBoss> {
   if (!pending) {
     pending = (async () => {
       const boss = new PgBoss({ connectionString: url, schema: queueSchema(reg), max: 3 });
-      boss.on("error", (error) => console.error("[Creama queue]", error));
+      boss.on("error", (error) => console.error("[Crema queue]", error));
       try {
         await boss.start();
         await boss.createQueue(DISCOVERY_QUEUE, discoveryPolicy);
@@ -40,7 +40,7 @@ export async function enqueueDiscovery(reg: Registry, input: Omit<DiscoveryTask,
   const boss = await jobs(reg);
   return reg.tx(async (c) => {
     // Two requests for the same source produce one run/job, even on different app processes.
-    await c.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`creama.discovery:${input.sourceId}`]);
+    await c.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`crema.discovery:${input.sourceId}`]);
     const active = (await c.query("SELECT id FROM runs WHERE source_id = $1 AND status = 'running' ORDER BY id DESC LIMIT 1", [input.sourceId])).rows[0];
     if (active) return active.id as number;
     const jobId = randomUUID();
@@ -59,8 +59,8 @@ export async function enqueueDiscovery(reg: Registry, input: Omit<DiscoveryTask,
 export async function startDiscoveryWorker(reg: Registry, execute?: (task: DiscoveryTask) => Promise<void>) {
   const boss = await jobs(reg);
   const perform = execute ?? (async (task: DiscoveryTask) => {
-    const { Creama } = await import("./service");
-    const svc = await new Creama(reg, { workspaceId: task.workspaceId, source: null }).withSource(task.sourceId);
+    const { Crema } = await import("./service");
+    const svc = await new Crema(reg, { workspaceId: task.workspaceId, source: null }).withSource(task.sourceId);
     await svc.discover(task.runId, { hint: task.hint, focus: task.focus });
   });
   const options = { batchSize: 1, localConcurrency: 1, includeMetadata: true, pollingIntervalSeconds: 1 } as const;
@@ -86,7 +86,7 @@ export async function processDiscovery(reg: Registry, job: JobWithMetadata<Disco
   const lock = await reg.db.pool.connect();
   let acquired = false;
   try {
-    acquired = (await lock.query("SELECT pg_try_advisory_lock(hashtext($1)) AS ok", [`creama.run:${task.runId}`])).rows[0].ok;
+    acquired = (await lock.query("SELECT pg_try_advisory_lock(hashtext($1)) AS ok", [`crema.run:${task.runId}`])).rows[0].ok;
     if (!acquired) throw new Error("Another worker still owns this discovery run.");
     const run = await reg.run(task.sourceId, task.runId);
     if (!run) throw new Error("Discovery run was not found on its original source.");
@@ -103,7 +103,7 @@ export async function processDiscovery(reg: Registry, job: JobWithMetadata<Disco
       throw error;
     }
   } finally {
-    if (acquired) await lock.query("SELECT pg_advisory_unlock(hashtext($1))", [`creama.run:${task.runId}`]).catch(() => {});
+    if (acquired) await lock.query("SELECT pg_advisory_unlock(hashtext($1))", [`crema.run:${task.runId}`]).catch(() => {});
     lock.release();
   }
 }
@@ -114,14 +114,14 @@ export async function closeJobs() {
 }
 
 /** One durable hourly schedule for the current single-workspace UI. Set 'off' to disable. */
-export async function startDriftWorker(reg: Registry, cron = process.env.CREAMA_DRIFT_CRON ?? "0 * * * *") {
+export async function startDriftWorker(reg: Registry, cron = process.env.CREMA_DRIFT_CRON ?? process.env.CREAMA_DRIFT_CRON ?? "0 * * * *") {
   const boss = await jobs(reg);
   if (cron === "off") { await boss.unschedule(DRIFT_QUEUE); return; }
   await boss.schedule(DRIFT_QUEUE, cron, { workspaceId: "default" });
   await boss.work<{ workspaceId: string }>(DRIFT_QUEUE, { batchSize: 1, localConcurrency: 1, pollingIntervalSeconds: 5 }, async (batch) => {
-    const { Creama } = await import("./service");
+    const { Crema } = await import("./service");
     for (const job of batch) {
-      const result = await new Creama(reg, { workspaceId: job.data.workspaceId, source: null }).checkDrift();
+      const result = await new Crema(reg, { workspaceId: job.data.workspaceId, source: null }).checkDrift();
       if (result.errors.length) throw new Error(`Drift checks failed for ${result.errors.length} source(s); see audit.`);
     }
   });

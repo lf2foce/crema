@@ -8,11 +8,11 @@ After installing dependencies and configuring `.env.local` (see `.env.example`),
 pnpm dev
 ```
 
-Creama applies state migrations, then starts Next dev and the discovery/drift worker
+Crema applies state migrations, then starts Next dev and the discovery/drift worker
 as separate child processes. If migration fails, neither starts. If either process
 exits, the other is stopped and the command returns a failure. Ctrl+C stops both,
 including Next's subprocesses on macOS/Linux, with a seven-second shutdown limit.
-The URL is `http://localhost:3300`; override the port with `CREAMA_DEV_PORT` and set
+The URL is `http://localhost:3300`; override the port with `CREMA_DEV_PORT` and set
 `APP_URL` to match. `pnpm dev:web` intentionally runs web only for debugging; it
 needs a separately running worker for discovery.
 
@@ -37,8 +37,8 @@ docker compose --env-file .env.docker.local ps
 docker compose --env-file .env.docker.local logs --tail=100 web worker migrate
 ```
 
-Four long-lived services: `web`, `worker`, `postgres` (Creama's state) and `hosting`
-(the databases Creama creates for apps). A fifth, `migrate`, is a
+Four long-lived services: `web`, `worker`, `postgres` (Crema's state) and `hosting`
+(the databases Crema creates for apps). A fifth, `migrate`, is a
 one-shot deployment step: Postgres health passes → migrations succeed → web and
 worker start. Postgres 18 persists in a named volume mounted at `/var/lib/postgresql`;
 the official image uses `PGDATA=/var/lib/postgresql/18/docker`.
@@ -46,20 +46,20 @@ See the [official image's PGDATA change](https://hub.docker.com/_/postgres).
 The startup gate uses [Compose dependency conditions](https://docs.docker.com/compose/how-tos/startup-order/).
 No DB host port is published. Web binds to host loopback, port 3300 by default, so
 put a reverse proxy in front for public access. `APP_URL` must match the public
-HTTPS URL; set `CREAMA_SETUP_TOKEN` before creating the first account there.
+HTTPS URL; set `CREMA_SETUP_TOKEN` before creating the first account there.
 
 `POSTGRES_PASSWORD` is interpolated into a connection URL: use the hex generation
 above, not punctuation requiring URL encoding. Rotating an env password does not
 change an already initialized Postgres role; rotate it in Postgres separately.
-Keep `BETTER_AUTH_SECRET` and `CREAMA_ENCRYPTION_KEY` stable across restarts: changing
+Keep `BETTER_AUTH_SECRET` and `CREMA_ENCRYPTION_KEY` stable across restarts: changing
 encryption keys can make stored source credentials unreadable. This bundled DB's
 bootstrap role is an administrator; for hardened production use a dedicated
 least-privilege state role. Hosted databases go on a separate Postgres server that an
 admin adds in the app (Databases → Servers); the bundled state DB is never offered for it in production. This Compose bundle is
 not an HA deployment or a backup policy.
 Default runtime limits are 512 MB per service, 0.75 CPU for web/worker/migrate,
-and 0.5 CPU for Postgres; override `CREAMA_APP_MEMORY`, `CREAMA_APP_CPUS`,
-`CREAMA_DB_MEMORY`, `CREAMA_DB_CPUS` if the workload needs more. These runtime
+and 0.5 CPU for Postgres; override `CREMA_APP_MEMORY`, `CREMA_APP_CPUS`,
+`CREMA_DB_MEMORY`, `CREMA_DB_CPUS` if the workload needs more. These runtime
 limits do not constrain Docker image builds.
 
 This is a fresh PostgreSQL 18 deployment, not an in-place major-version upgrade.
@@ -86,7 +86,7 @@ docker compose --env-file .env.docker.local stop
 ```
 
 `stop` leaves the volume intact. Do not use `down -v` unless you intentionally want
-to delete Creama's state. Do not paste `docker compose config` output into public
+to delete Crema's state. Do not paste `docker compose config` output into public
 logs: it expands runtime secrets.
 
 ### The hosting server
@@ -95,10 +95,10 @@ logs: it expands runtime secrets.
 (`HOSTING_SUPERUSER_PASSWORD`, which only that container sees). On first boot
 `deploy/hosting/init.sh` turns on TLS with a self-signed certificate kept in its data
 directory, makes every TCP connection use TLS and `scram-sha-256`, and creates
-`creama_provisioner` (`CREATEDB CREATEROLE`, no superuser) with `HOSTING_PROVISIONER_PASSWORD`.
-Creama only gets that login (`CREAMA_BUNDLED_SERVER_URL`), and uses this server the first
-time someone creates a database. Apps connect on `CREAMA_HOSTING_PORT` (5433) at
-`CREAMA_HOSTING_PUBLIC_HOST` with `sslmode=require`. The init script runs only on an empty
+`crema_provisioner` (`CREATEDB CREATEROLE`, no superuser) with `HOSTING_PROVISIONER_PASSWORD`.
+Crema only gets that login (`CREMA_BUNDLED_SERVER_URL`), and uses this server the first
+time someone creates a database. Apps connect on `CREMA_HOSTING_PORT` (5433) at
+`CREMA_HOSTING_PUBLIC_HOST` with `sslmode=require`. The init script runs only on an empty
 volume: changing either password later means `ALTER ROLE` inside the container too.
 Back the volume up at the cluster level; it holds your apps' data.
 
@@ -147,7 +147,7 @@ compose -p phenau-crema-test-f9n3je --env-file .env -f ./compose.yaml up -d --no
 ```
 
 Build each new image explicitly with the dedicated `phenau-crema-build` builder
-(limited to 1 CPU / 2 GB RAM), then set `CREAMA_IMAGE_TAG` before deploying.
+(limited to 1 CPU / 2 GB RAM), then set `CREMA_IMAGE_TAG` before deploying.
 A Git push alone does not rebuild the image. For schema upgrades, follow the
 stop/migrate/start procedure above rather than relying on this initial-deploy command.
 

@@ -100,8 +100,8 @@ export function NewMetric({ notify, back, onCreated }: { notify: (t: string, e?:
           </label>
         </div>
         <p className="faint small mt-3">
-          {kind === "flow" ? <>Use <span className="mono">{"{{start}}"}</span> and <span className="mono">{"{{end}}"}</span> for the period. Creama runs it over the last 30 days and over each month to draw the history.</>
-            : <>Use <span className="mono">{"{{at}}"}</span> for the moment being measured. Creama runs it now and at each month end to draw the history.</>}
+          {kind === "flow" ? <>Use <span className="mono">{"{{start}}"}</span> and <span className="mono">{"{{end}}"}</span> for the period. Crema runs it over the last 30 days and over each month to draw the history.</>
+            : <>Use <span className="mono">{"{{at}}"}</span> for the moment being measured. Crema runs it now and at each month end to draw the history.</>}
           {" "}Every query runs in a read-only transaction.
         </p>
         <div className="row mt-4 wrap">
@@ -116,7 +116,7 @@ export function NewMetric({ notify, back, onCreated }: { notify: (t: string, e?:
         <div className="section">
           <div className="section-title">Last 12 months</div>
           <div className="card pad"><LineChart lines={[{ label: name || "New metric", series: preview.series, color: "var(--s0)" }]} unit={unit} /></div>
-          <div className="section-title mt-5">Checked by Creama</div>
+          <div className="section-title mt-5">Checked by Crema</div>
           <div className="card pad"><Checks checks={preview.checks} /></div>
         </div>
       )}

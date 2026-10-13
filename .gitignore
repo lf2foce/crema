@@ -1,11 +1,11 @@
 node_modules
 .next
-.creama
+.crema*
+.creama*
 .env*.local
 .env
 next-env.d.ts
 *.tsbuildinfo
 e2e/last-run.png
-.creama-e2e
 test-results
 playwright-report

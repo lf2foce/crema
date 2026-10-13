@@ -35,7 +35,7 @@ export async function runSql(wh: Warehouse, sql: string, limit = 500): Promise<R
   const params = { start: start.toISOString(), end: now.toISOString(), at: now.toISOString() };
   const b = bind(body, params);
   const t0 = Date.now();
-  const res = await wh.readOnly((c) => c.query({ text: `SELECT * FROM (${b.text}\n) AS creama_q LIMIT ${limit + 1}`, values: b.values, rowMode: "array" }), 15_000);
+  const res = await wh.readOnly((c) => c.query({ text: `SELECT * FROM (${b.text}\n) AS crema_q LIMIT ${limit + 1}`, values: b.values, rowMode: "array" }), 15_000);
   const rows = (res.rows as unknown[][]).map((r) => r.map(cell));
   return {
     columns: res.fields.map((f) => ({ name: f.name, type: TYPES[f.dataTypeID] ?? `oid ${f.dataTypeID}` })),

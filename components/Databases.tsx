@@ -23,9 +23,9 @@ const FORMATS: { id: string; label: string; render: (url: string) => string }[] 
 ];
 
 /**
- * Every database in the workspace, Neon-style: the ones you connected and the ones Creama created
+ * Every database in the workspace, Neon-style: the ones you connected and the ones Crema created
  * for your apps, plus the Postgres servers it creates them on. Pick one to see how to connect,
- * open it in Creama, or manage it.
+ * open it in Crema, or manage it.
  */
 export function Databases({ state, selected, server, notify, reload }: { state: AppState; selected: number | null; server: number | null; notify: (t: string, e?: boolean) => void; reload: () => void }) {
   const [creating, setCreating] = useState(false);
@@ -80,7 +80,7 @@ export function Databases({ state, selected, server, notify, reload }: { state: 
           : db ? <Detail key={db.id} db={db} server={servers.find((v) => v.id === db.serverId) ?? null} admin={admin} notify={notify} onChanged={changed} /> : (
           <div className="hosted-empty">
             <h1 className="title">Your databases</h1>
-            <p className="meaning">Connect a database you already have, or create a new one for an app — and let Creama find and certify its metrics.</p>
+            <p className="meaning">Connect a database you already have, or create a new one for an app — and let Crema find and certify its metrics.</p>
             <div className="row gap-3"><a className="btn primary lg" href="/#connect">Connect a database</a>{admin && <button className="btn lg" onClick={create}>Create a new one</button>}</div>
           </div>
         )}
@@ -111,7 +111,7 @@ function NewDatabase({ servers, notify, onClose, onCreated }: { servers: ServerI
         {servers.length > 1 && <label className="field">Server<select className="select" value={serverId} onChange={(e) => setServerId(Number(e.target.value))}>
           {servers.map((v) => <option key={v.id} value={v.id}>{v.name} · {v.publicHost}</option>)}
         </select></label>}
-        <p className="use-note m-0">Database <span className="mono">{slug ? `app_${slug}` : "app_…"}</span>, login <span className="mono">{slug ? `app_${slug}_owner` : "…_owner"}</span> for your app, and a read-only login for Creama.</p>
+        <p className="use-note m-0">Database <span className="mono">{slug ? `app_${slug}` : "app_…"}</span>, login <span className="mono">{slug ? `app_${slug}_owner` : "…_owner"}</span> for your app, and a read-only login for Crema.</p>
         <div className="row"><span className="grow" /><button type="button" className="btn" onClick={onClose}>Cancel</button><button className="btn primary" disabled={busy || !slug}>{busy ? <span className="spin" /> : "Create"}</button></div>
       </form>
     </Modal>
@@ -126,7 +126,7 @@ function AddServer({ notify, onClose, onAdded }: { notify: (t: string, e?: boole
   const [ssl, setSsl] = useState(true);
   const [busy, setBusy] = useState(false);
   const done = (r: { server: { id: number; name: string }; createdProvisioner: string | null }) => {
-    notify(r.createdProvisioner ? `${r.server.name} added. Creama created its own login ${r.createdProvisioner}; the superuser password wasn’t kept.` : `${r.server.name} added.`);
+    notify(r.createdProvisioner ? `${r.server.name} added. Crema created its own login ${r.createdProvisioner}; the superuser password wasn’t kept.` : `${r.server.name} added.`);
     onAdded(r.server.id);
   };
   const submit = async (e: React.FormEvent) => {
@@ -139,9 +139,9 @@ function AddServer({ notify, onClose, onAdded }: { notify: (t: string, e?: boole
     <Modal onClose={onClose}>
       <form className="stack" onSubmit={submit}>
         <h2 className="schema-h m-0">Add a hosting server</h2>
-        <p className="use-note m-0">New databases need a Postgres server to live on (PostgreSQL 16 or newer). Use one of its own, not the one that holds Creama’s data.</p>
+        <p className="use-note m-0">New databases need a Postgres server to live on (PostgreSQL 16 or newer). Use one of its own, not the one that holds Crema’s data.</p>
         <label className="field">Admin connection string<input className="input mono" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="postgresql://postgres:…@db.example.com:5432/postgres" required /></label>
-        <p className="use-note m-0">A superuser is used once, to create Creama’s own login with only CREATEDB and CREATEROLE; its password isn’t kept. Or give such a login yourself.</p>
+        <p className="use-note m-0">A superuser is used once, to create Crema’s own login with only CREATEDB and CREATEROLE; its password isn’t kept. Or give such a login yourself.</p>
         <div className="row gap-3">
           <label className="field grow">Address apps use<input className="input mono" value={publicHost} onChange={(e) => setPublicHost(e.target.value)} placeholder="same as above" /></label>
           <label className="field grow">Name<input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="the host" maxLength={60} /></label>
@@ -158,7 +158,7 @@ function ServerDetail({ server, notify, onChanged }: { server: ServerInfo; notif
   const [busy, setBusy] = useState(false);
   useEffect(() => { api(`/api/servers/${server.id}/check`, { source: null }).then(setCheck).catch((e) => setCheck({ ok: false, reason: (e as Error).message, version: null })); }, [server.id]);
   const remove = async () => {
-    if (!window.confirm(`Remove ${server.name} from Creama? Only possible once it holds no databases. Nothing on the server is deleted.`)) return;
+    if (!window.confirm(`Remove ${server.name} from Crema? Only possible once it holds no databases. Nothing on the server is deleted.`)) return;
     setBusy(true);
     try {
       const r = await api<{ provisioner: string }>(`/api/servers/${server.id}/delete`, { body: {}, source: null });
@@ -178,8 +178,8 @@ function ServerDetail({ server, notify, onChanged }: { server: ServerInfo; notif
         <div><span>Added</span><b>{ago(server.createdAt)}</b><small>by {server.createdBy}</small></div>
       </div>
       <section className="hosted-card">
-        <div className="hosted-card-head"><h2>Creama’s login</h2></div>
-        <p className="m-0 muted">Creama manages this server as <span className="mono">{server.provisioner}</span>: it can create databases and roles, and change only the ones it created. It isn’t a superuser and can’t touch other databases here.</p>
+        <div className="hosted-card-head"><h2>Crema’s login</h2></div>
+        <p className="m-0 muted">Crema manages this server as <span className="mono">{server.provisioner}</span>: it can create databases and roles, and change only the ones it created. It isn’t a superuser and can’t touch other databases here.</p>
       </section>
       <section className="hosted-card danger">
         <div className="hosted-card-head"><h2>Danger zone</h2></div>
@@ -211,7 +211,7 @@ function Detail({ db, server, admin, notify, onChanged }: { db: SourceInfo; serv
     try { await fn(); } catch (e) { notify((e as Error).message, true); } finally { setBusy(null); }
   };
   const reset = () => {
-    if (!window.confirm(`New password for the ${role === "owner" ? "app" : "Creama read-only"} login of ${db.dbName}? Anything using the old one loses access now.`)) return;
+    if (!window.confirm(`New password for the ${role === "owner" ? "app" : "Crema read-only"} login of ${db.dbName}? Anything using the old one loses access now.`)) return;
     act("reset", async () => { setConn(await api<Conn>(`/api/sources/${db.id}/reset-password`, { body: { role }, source: null })); setReveal(true); notify("New password issued."); });
   };
   const retry = () => act("retry", async () => { await api(`/api/sources/${db.id}/retry`, { body: {}, source: null }); notify(`${db.dbName} is ready.`); onChanged(db.id); });
@@ -219,7 +219,7 @@ function Detail({ db, server, admin, notify, onChanged }: { db: SourceInfo; serv
     const name = hosted ? db.dbName! : db.slug;
     const typed = window.prompt(hosted
       ? `Delete ${name} and all its data? This can't be undone. Type the database name to confirm:`
-      : `Remove ${db.name} from Creama? Its certified metrics stop being served; the database itself isn't touched. Type “${name}” to confirm:`);
+      : `Remove ${db.name} from Crema? Its certified metrics stop being served; the database itself isn't touched. Type “${name}” to confirm:`);
     if (typed !== name) { if (typed !== null) notify("The name didn't match; nothing was removed.", true); return; }
     act("delete", async () => { await api(`/api/sources/${db.id}/delete`, { body: {}, source: null }); notify(hosted ? `Deleted ${name}.` : `Removed ${db.name}.`); onChanged(); });
   };
@@ -229,17 +229,17 @@ function Detail({ db, server, admin, notify, onChanged }: { db: SourceInfo; serv
       <div className="eyebrow">Connected database</div>
       <h1 className="title">{db.name}</h1>
       <div className="hosted-stats">
-        <div><span>In Creama</span><b className="mono">{db.slug}</b></div>
+        <div><span>In Crema</span><b className="mono">{db.slug}</b></div>
         <div><span>Metrics</span><b>{db.metrics}{db.attention ? ` · ${db.attention} need attention` : ""}</b></div>
         <div><span>Login</span><b>{db.readOnly ? "read-only" : `can write (${db.writableTables} tables)`}</b></div>
         <div><span>Added</span><b>{ago(db.createdAt)}</b><small>by {db.createdBy}</small></div>
       </div>
       <section className="hosted-card">
-        <div className="row"><p className="m-0 grow muted">Creama reads it in read-only transactions with the connection string you gave; it’s stored encrypted.</p><a className="btn primary" href={sourceHref(db.slug)}>Open</a></div>
+        <div className="row"><p className="m-0 grow muted">Crema reads it in read-only transactions with the connection string you gave; it’s stored encrypted.</p><a className="btn primary" href={sourceHref(db.slug)}>Open</a></div>
       </section>
       {admin && <section className="hosted-card danger">
         <div className="hosted-card-head"><h2>Danger zone</h2></div>
-        <div className="row"><div className="grow"><b>Remove from Creama</b><div className="small muted">Forgets the connection. Its metrics stop being served; history stays in the audit log. The database isn’t touched.</div></div><button className="btn text-fail" disabled={busy === "delete"} onClick={remove}>Remove</button></div>
+        <div className="row"><div className="grow"><b>Remove from Crema</b><div className="small muted">Forgets the connection. Its metrics stop being served; history stays in the audit log. The database isn’t touched.</div></div><button className="btn text-fail" disabled={busy === "delete"} onClick={remove}>Remove</button></div>
       </section>}
     </div>
   );
@@ -268,7 +268,7 @@ function Detail({ db, server, admin, notify, onChanged }: { db: SourceInfo; serv
           <span className="grow" />
           <select className="select sm" value={role} onChange={(e) => { setRole(e.target.value as Role); setReveal(false); }} aria-label="Login">
             <option value="owner">{db.dbName}_owner · app (read/write)</option>
-            <option value="reader">{db.dbName}_creama · read-only</option>
+            <option value="reader">{db.dbName}_crema · read-only</option>
           </select>
         </div>
         <div className="round-pills hosted-formats" role="tablist">
@@ -289,8 +289,8 @@ function Detail({ db, server, admin, notify, onChanged }: { db: SourceInfo; serv
       </section>}
 
       {ready && <section className="hosted-card">
-        <div className="hosted-card-head"><h2>Creama</h2></div>
-        <div className="row"><p className="m-0 grow muted">Creama analyses it with the read-only login{db.metrics ? `: ${db.metrics} certified metric${db.metrics > 1 ? "s" : ""}` : ""}.</p><a className="btn primary" href={sourceHref(db.slug)}>Open</a></div>
+        <div className="hosted-card-head"><h2>Crema</h2></div>
+        <div className="row"><p className="m-0 grow muted">Crema analyses it with the read-only login{db.metrics ? `: ${db.metrics} certified metric${db.metrics > 1 ? "s" : ""}` : ""}.</p><a className="btn primary" href={sourceHref(db.slug)}>Open</a></div>
       </section>}
 
       {admin && <section className="hosted-card danger">

@@ -1,7 +1,7 @@
 #!/usr/bin/env -S npx tsx
-// One-off: copy a registry from the old SQLite file (.creama/creama.db) into Postgres (DATABASE_URL).
+// One-off: copy a registry from the old SQLite file (.crema/crema.db) into Postgres (DATABASE_URL).
 // Keeps ids, so links like #p/5 keep working. Refuses to run into a registry that already has data.
-//   npx tsx bin/import-sqlite.ts [path/to/creama.db]
+//   npx tsx bin/import-sqlite.ts [path/to/crema.db]
 import { existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,7 +9,7 @@ import { DatabaseSync } from "node:sqlite";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 for (const f of [".env.local", ".env"]) if (existsSync(resolve(root, f))) process.loadEnvFile(resolve(root, f));
-const file = resolve(process.argv[2] ?? resolve(root, ".creama/creama.db"));
+const file = resolve(process.argv[2] ?? resolve(root, ".crema/crema.db"));
 if (!existsSync(file)) throw new Error(`No SQLite registry at ${file}`);
 
 const { database, closeDatabases } = await import("../core/db");

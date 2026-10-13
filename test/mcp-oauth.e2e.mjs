@@ -21,7 +21,7 @@ await page.waitForURL((u) => !u.pathname.startsWith("/sign-in"));
 
 // a public (PKCE) native client, registered by a signed-in person — no dynamic registration
 const created = await (await page.request.post(`${B}/api/auth/oauth2/create-client`, { headers: { origin: B }, data: {
-  client_name: "creama e2e", redirect_uris: [CB], token_endpoint_auth_method: "none", type: "native", application_type: "native",
+  client_name: "crema e2e", redirect_uris: [CB], token_endpoint_auth_method: "none", type: "native", application_type: "native",
   grant_types: ["authorization_code", "refresh_token"], response_types: ["code"], scope: "openid metrics:read offline_access",
 } })).json();
 ok("client created", Boolean(created.client_id), created.client_id ? "" : JSON.stringify(created));
@@ -42,7 +42,7 @@ const tok = await (await fetch(`${B}/api/auth/oauth2/token`, { method: "POST", h
 ok("access token", Boolean(tok.access_token), `scope "${tok.scope}", refresh ${Boolean(tok.refresh_token)}`);
 
 const connect = async (token) => {
-  const client = new Client({ name: "creama-e2e", version: "1.0.0" }, { versionNegotiation: { mode: { pin: "2026-07-28" } } });
+  const client = new Client({ name: "crema-e2e", version: "1.0.0" }, { versionNegotiation: { mode: { pin: "2026-07-28" } } });
   await client.connect(new StreamableHTTPClientTransport(new URL(RES), { requestInit: { headers: { authorization: `Bearer ${token}` } } }));
   return client;
 };

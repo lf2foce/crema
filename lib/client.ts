@@ -1,10 +1,10 @@
 "use client";
-// Browser-side client for the Creama HTTP API.
+// Browser-side client for the Crema HTTP API.
 import type { AuditEvent, Concept, EntityReading, Metric, Run, Server, Source, Verification } from "@/core/types";
 
 /** A database in the workspace, with counts (from /api/state and /api/sources). */
 export type SourceInfo = Source & { metrics: number; proposals: number; attention: number; sizeBytes: number | null; connections: number | null; missing: boolean };
-/** A Postgres server Creama creates databases on, with how many it holds. */
+/** A Postgres server Crema creates databases on, with how many it holds. */
 export type ServerInfo = Server & { databases: number };
 
 export type AppState = {
@@ -49,7 +49,7 @@ export const actor = { get: () => me?.name || me?.email || "" };
 export async function api<T = any>(path: string, opts: { method?: string; body?: unknown; source?: string | null } = {}, retried = false): Promise<T> {
   const headers: Record<string, string> = { "content-type": "application/json" };
   const source = opts.source === undefined ? currentSource : opts.source;
-  if (source) headers["x-creama-source"] = source;
+  if (source) headers["x-crema-source"] = source;
   const res = await fetch(path, { method: opts.method ?? (opts.body ? "POST" : "GET"), headers, body: opts.body ? JSON.stringify(opts.body) : undefined });
   const json = await res.json().catch(() => ({}));
   // signed out (or the session expired): go sign in and come back here

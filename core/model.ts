@@ -20,21 +20,21 @@ const supported: Record<Provider, RegExp> = {
 };
 
 export function thinkingLevel(): "minimal" | "low" | "medium" | "high" {
-  const value = (process.env.CREAMA_THINKING || "low").toLowerCase();
+  const value = (process.env.CREMA_THINKING || process.env.CREAMA_THINKING || "low").toLowerCase();
   return ["minimal", "low", "medium", "high"].includes(value) ? value as ReturnType<typeof thinkingLevel> : "low";
 }
 export function modelName(): string {
-  return process.env.CREAMA_MODEL || ((process.env.CREAMA_PROVIDER || "google") === "google" ? "gemini-3.8-flash" : "");
+  return process.env.CREMA_MODEL || process.env.CREAMA_MODEL || ((process.env.CREMA_PROVIDER || process.env.CREAMA_PROVIDER || "google") === "google" ? "gemini-3.8-flash" : "");
 }
 export function modelSettings(env: Env = process.env) {
-  const provider = env.CREAMA_PROVIDER || "google";
+  const provider = env.CREMA_PROVIDER || env.CREAMA_PROVIDER || "google";
   if (!Object.hasOwn(supported, provider)) {
     throw new ModelError(`Provider '${provider}' is not enabled: native schema output has not been verified for this integration. JSON-mode fallback is forbidden.`);
   }
   const p = provider as Provider;
-  const name = env.CREAMA_MODEL || (p === "google" ? "gemini-3.8-flash" : "");
+  const name = env.CREMA_MODEL || env.CREAMA_MODEL || (p === "google" ? "gemini-3.8-flash" : "");
   if (!supported[p].test(name)) {
-    throw new ModelError(`Model '${name || "(missing)"}' is not approved for native schema output with ${p}. Set a supported CREAMA_MODEL.`);
+    throw new ModelError(`Model '${name || "(missing)"}' is not approved for native schema output with ${p}. Set a supported CREMA_MODEL.`);
   }
   const key = p === "google" ? env.GEMINI_API_KEY || env.GOOGLE_API_KEY || env.PHENAU_GOOGLE_API_KEY
     : p === "openai" ? env.OPENAI_API_KEY : p === "xai" ? env.XAI_API_KEY : env.ANTHROPIC_API_KEY;

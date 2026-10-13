@@ -1,12 +1,12 @@
 #!/usr/bin/env -S npx tsx
-// Creama CLI and MCP server. Same domain core as the web app; no HTTP involved.
-//   creama connect <postgres-url> [--name "..."]          add a database (a source) to the workspace
-//   creama sources
-//   creama discover [--source slug] [--hint "..."] [--focus "metric name"]
-//   creama list
-//   creama query <source/key> [--from 2026-01-01] [--to ...] [--grain month] [--version 1] [--json]
-//   creama audit
-//   creama mcp            # stdio MCP server exposing certified metrics only
+// Crema CLI and MCP server. Same domain core as the web app; no HTTP involved.
+//   crema connect <postgres-url> [--name "..."]          add a database (a source) to the workspace
+//   crema sources
+//   crema discover [--source slug] [--hint "..."] [--focus "metric name"]
+//   crema list
+//   crema query <source/key> [--from 2026-01-01] [--to ...] [--grain month] [--version 1] [--json]
+//   crema audit
+//   crema mcp            # stdio MCP server exposing certified metrics only
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
@@ -17,7 +17,7 @@ for (const f of [".env.local", ".env"]) {
   if (existsSync(p)) process.loadEnvFile(p);
 }
 
-const { Creama, CreamaError } = await import("../core/service");
+const { Crema, CremaError } = await import("../core/service");
 const { display } = await import("../core/format");
 const { closePools } = await import("../core/warehouse");
 const { closeDatabases } = await import("../core/db");
@@ -32,12 +32,12 @@ for (let i = 0; i < rest.length; i++) {
   } else args.push(rest[i]);
 }
 
-const r = new Creama();
+const r = new Crema();
 /** The source a command acts on: --source, or the only/first one in the workspace. */
 async function pick() {
   if (flags.source) return r.withSource(flags.source);
   const [first] = await r.reg.sources(r.scope.workspaceId);
-  if (!first) throw new CreamaError("No database yet: run `creama connect <postgres-url>` first.");
+  if (!first) throw new CremaError("No database yet: run `crema connect <postgres-url>` first.");
   return r.withSource(first.id);
 }
 const out = (s = "") => process.stdout.write(s + "\n");
@@ -45,9 +45,9 @@ const out = (s = "") => process.stdout.write(s + "\n");
 async function main() {
   switch (cmd) {
     case "connect": {
-      if (!args[0]) throw new CreamaError("Usage: creama connect <postgres-url>");
+      if (!args[0]) throw new CremaError("Usage: crema connect <postgres-url>");
       const c = await r.addExternal(args[0], process.env.USER ?? "cli", flags.name);
-      out(`Added ${c.source.name} as “${c.source.slug}” · ${c.display} · ${c.tables} tables · ${c.readOnlyRole || !c.writableTables ? "read-only role" : `role can write to ${c.writableTables} tables (Creama only reads)`}`);
+      out(`Added ${c.source.name} as “${c.source.slug}” · ${c.display} · ${c.tables} tables · ${c.readOnlyRole || !c.writableTables ? "read-only role" : `role can write to ${c.writableTables} tables (Crema only reads)`}`);
       return;
     }
     case "sources": {
@@ -62,12 +62,12 @@ async function main() {
     }
     case "list": {
       const ms = await r.listMetrics();
-      if (!ms.length) return out("No certified metrics yet. Run `creama discover`, then certify proposals in the web app.");
+      if (!ms.length) return out("No certified metrics yet. Run `crema discover`, then certify proposals in the web app.");
       for (const m of ms) out(`${m.ref.padEnd(36)} ${display(m.latest.value, m.unit).padStart(10)}  v${m.version} · ${m.certifiedBy} · ${m.name}`);
       return;
     }
     case "query": {
-      if (!args[0]) throw new CreamaError("Usage: creama query <source/key> [--from] [--to] [--grain day|week|month|quarter|year] [--version n]");
+      if (!args[0]) throw new CremaError("Usage: crema query <source/key> [--from] [--to] [--grain day|week|month|quarter|year] [--version n]");
       const res: any = await r.query(args[0], { from: flags.from, to: flags.to, grain: (flags.grain as any) ?? null, version: flags.version ? Number(flags.version) : undefined });
       if (flags.json) return out(JSON.stringify(res, null, 2));
       out(`${res.name} (${res.metric}) · v${res.version} certified by ${res.certifiedBy}`);
@@ -82,7 +82,7 @@ async function main() {
     case "mcp":
       return mcp();
     default:
-      out("Usage: creama <connect|sources|discover|list|query|audit|mcp> ...");
+      out("Usage: crema <connect|sources|discover|list|query|audit|mcp> ...");
   }
 }
 
@@ -91,7 +91,7 @@ async function mcp() {
   const { StdioServerTransport } = await import("@modelcontextprotocol/sdk/server/stdio.js");
   const { MCP_INSTRUCTIONS, MCP_TOOLS, runTool } = await import("../core/mcpTools");
 
-  const server = new McpServer({ name: "creama", version: "0.1.0" }, { instructions: MCP_INSTRUCTIONS });
+  const server = new McpServer({ name: "crema", version: "0.1.0" }, { instructions: MCP_INSTRUCTIONS });
   for (const t of MCP_TOOLS) {
     // the v1 SDK takes the raw zod shape
     server.registerTool(t.name, { title: t.title, description: t.description, inputSchema: t.input.shape }, (a: any) => runTool(() => t.run(r, a)));
@@ -104,7 +104,7 @@ try {
   await main();
   if (cmd !== "mcp") { await (await import("../core/jobs")).closeJobs(); await closePools(); await closeDatabases(); }
 } catch (e) {
-  process.stderr.write(`${e instanceof CreamaError ? "" : "Error: "}${(e as Error).message}\n`);
+  process.stderr.write(`${e instanceof CremaError ? "" : "Error: "}${(e as Error).message}\n`);
   await (await import("../core/jobs")).closeJobs();
   await closePools();
   await closeDatabases();

@@ -31,7 +31,7 @@ export default function Consent() {
 
   return (
     <div className="connect auth">
-      <h1>Allow access to Creama?</h1>
+      <h1>Allow access to Crema?</h1>
       <div className="auth-card">
         <p className="use-lead"><b className="mono">{host || "An application"}</b> wants to:</p>
         <ul className="consent-list">

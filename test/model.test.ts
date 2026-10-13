@@ -13,23 +13,23 @@ const usage: LanguageModelUsage = {
 };
 afterEach(() => { vi.unstubAllEnvs(); generate.mockReset(); });
 function setup() {
-  vi.stubEnv("CREAMA_PROVIDER", "google"); vi.stubEnv("CREAMA_MODEL", "gemini-3.8-flash");
+  vi.stubEnv("CREMA_PROVIDER", "google"); vi.stubEnv("CREMA_MODEL", "gemini-3.8-flash");
   vi.stubEnv("GEMINI_API_KEY", "dummy-test-key");
 }
 
 describe("schema-only boundary", () => {
   it("blocks unverified providers and unknown/text-only models before any call", () => {
     for (const provider of ["deepseek", "compatible", "__proto__"]) {
-      expect(() => modelSettings({ CREAMA_PROVIDER: provider, AI_API_KEY: "dummy" })).toThrow(/not enabled/);
+      expect(() => modelSettings({ CREMA_PROVIDER: provider, AI_API_KEY: "dummy" })).toThrow(/not enabled/);
     }
-    expect(() => modelSettings({ CREAMA_PROVIDER: "google", CREAMA_MODEL: "gemma-3-27b-it", GEMINI_API_KEY: "dummy" })).toThrow(/not approved/);
-    expect(() => modelSettings({ CREAMA_PROVIDER: "google", CREAMA_MODEL: "gemini-3.8-pro", GEMINI_API_KEY: "dummy" })).toThrow(/not approved/);
-    expect(() => modelSettings({ CREAMA_PROVIDER: "openai", OPENAI_API_KEY: "dummy" })).toThrow(/missing/);
+    expect(() => modelSettings({ CREMA_PROVIDER: "google", CREMA_MODEL: "gemma-3-27b-it", GEMINI_API_KEY: "dummy" })).toThrow(/not approved/);
+    expect(() => modelSettings({ CREMA_PROVIDER: "google", CREMA_MODEL: "gemini-3.8-pro", GEMINI_API_KEY: "dummy" })).toThrow(/not approved/);
+    expect(() => modelSettings({ CREMA_PROVIDER: "openai", OPENAI_API_KEY: "dummy" })).toThrow(/missing/);
     expect(generate).not.toHaveBeenCalled();
   });
   it("does not borrow another provider's key", () => {
-    expect(() => modelSettings({ CREAMA_PROVIDER: "xai", CREAMA_MODEL: "grok-4", GEMINI_API_KEY: "dummy" })).toThrow(/Missing API key/);
-    setup(); vi.stubEnv("CREAMA_PROVIDER", "deepseek"); expect(modelConfigured()).toBe(false);
+    expect(() => modelSettings({ CREMA_PROVIDER: "xai", CREMA_MODEL: "grok-4", GEMINI_API_KEY: "dummy" })).toThrow(/Missing API key/);
+    setup(); vi.stubEnv("CREMA_PROVIDER", "deepseek"); expect(modelConfigured()).toBe(false);
   });
   it("accepts only validated output and requests a schema", async () => {
     setup(); generate.mockResolvedValue({ output: { count: 1 }, totalUsage: usage, warnings: [] });
@@ -80,7 +80,7 @@ describe("real adapter wire contracts (offline)", () => {
       body = JSON.parse(String(init?.body));
       throw new Error("Offline: intercepted before network");
     };
-    const { model } = schemaModel({ CREAMA_PROVIDER: provider, CREAMA_MODEL: name, [key]: "dummy" }, fetch);
+    const { model } = schemaModel({ CREMA_PROVIDER: provider, CREMA_MODEL: name, [key]: "dummy" }, fetch);
     await expect(actual.generateText({ model, output: actual.Output.object({ schema }), prompt: "offline",
       maxRetries: 0, maxOutputTokens: 100, providerOptions: schemaProviderOptions(name) })).rejects.toThrow();
     expect(body).toBeDefined();

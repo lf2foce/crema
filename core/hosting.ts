@@ -1,8 +1,8 @@
-// Hosted databases: Postgres databases Creama creates for apps elsewhere, on a server an admin
+// Hosted databases: Postgres databases Crema creates for apps elsewhere, on a server an admin
 // added (see `servers` in the registry). Each database gets
 //   - an owner role the app connects with (read/write, nothing beyond its own database)
-//   - a read-only role Creama uses to analyse it
-// Creama administers a server through its own provisioner login: CREATEDB + CREATEROLE, never a
+//   - a read-only role Crema uses to analyse it
+// Crema administers a server through its own provisioner login: CREATEDB + CREATEROLE, never a
 // superuser. On PostgreSQL 16+ such a role can only alter or drop roles it created itself, so a
 // bug here can't touch anything else on the server. Passwords are generated here; the service
 // stores them sealed (core/secret.ts).
@@ -19,7 +19,7 @@ const MIN_VERSION = 160000; // CREATEROLE scoped to the roles it created
 
 export type HostedInfo = { dbName: string; owner: string; reader: string; sizeBytes: number | null; connections: number };
 export type Address = { host: string; port: number; ssl: boolean };
-/** What a login can do on a server, checked before Creama keeps it. */
+/** What a login can do on a server, checked before Crema keeps it. */
 export type LoginCheck = { user: string; version: string; versionNum: number; superuser: boolean; canProvision: boolean };
 
 async function connect<T>(url: string, fn: (c: pg.Client) => Promise<T>, database?: string): Promise<T> {
@@ -42,21 +42,21 @@ export class Hosting {
     return { user: row.who, version: row.version, versionNum: Number(row.num), superuser: row.su, canProvision: !row.su && row.db && row.role };
   }
 
-  /** Why Creama won't administer a server through this login, or null when it will. */
+  /** Why Crema won't administer a server through this login, or null when it will. */
   static refusal(c: LoginCheck): string | null {
     if (c.versionNum < MIN_VERSION) return `PostgreSQL ${c.version} is too old: hosting needs 16 or newer, where a role that creates roles can only manage its own.`;
-    if (c.superuser) return `“${c.user}” is a superuser. Creama administers servers through a limited login (CREATEDB, CREATEROLE).`;
+    if (c.superuser) return `“${c.user}” is a superuser. Crema administers servers through a limited login (CREATEDB, CREATEROLE).`;
     if (!c.canProvision) return `“${c.user}” can't create databases and roles (needs CREATEDB and CREATEROLE).`;
     return null;
   }
 
   /**
-   * Given a superuser login once, create Creama's own provisioner (CREATEDB CREATEROLE, nothing
+   * Given a superuser login once, create Crema's own provisioner (CREATEDB CREATEROLE, nothing
    * more) and return its URL. The superuser's credentials are used for this one statement and
    * never stored.
    */
   static async createProvisioner(superUrl: string): Promise<{ url: string; role: string }> {
-    const role = `creama_provisioner_${randomBytes(3).toString("hex")}`, pw = password();
+    const role = `crema_provisioner_${randomBytes(3).toString("hex")}`, pw = password();
     await connect(superUrl, (c) => c.query(`CREATE ROLE ${quoteIdent(role)} LOGIN PASSWORD ${literal(pw)} CREATEDB CREATEROLE NOSUPERUSER NOREPLICATION NOBYPASSRLS CONNECTION LIMIT 10`));
     const u = new URL(superUrl);
     u.username = role; u.password = pw; u.pathname = "/postgres";
@@ -65,7 +65,7 @@ export class Hosting {
 
   /** Undo createProvisioner when the server couldn't be recorded. */
   static async dropRole(superUrl: string, role: string) {
-    if (!/^creama_provisioner_[0-9a-f]{6}$/.test(role)) throw new HostingError("Not a provisioner role.");
+    if (!/^crema_provisioner_[0-9a-f]{6}$/.test(role)) throw new HostingError("Not a provisioner role.");
     await connect(superUrl, (c) => c.query(`DROP ROLE IF EXISTS ${quoteIdent(role)}`));
   }
 
@@ -78,7 +78,7 @@ export class Hosting {
     return { host, port: Number(port || 5432), ssl: ssl ?? !local };
   }
 
-  /** How Creama itself reaches a hosted database: through the admin host, not the public address. */
+  /** How Crema itself reaches a hosted database: through the admin host, not the public address. */
   internalUrl(dbName: string, role: string, pw: string) {
     const u = new URL(this.adminUrl);
     u.username = role; u.password = pw; u.pathname = `/${dbName}`;
@@ -107,7 +107,7 @@ export class Hosting {
   }
 
   /**
-   * Is each name free, or Creama's from an earlier attempt with this token? Ours means: the
+   * Is each name free, or Crema's from an earlier attempt with this token? Ours means: the
    * provisioner created the role (PostgreSQL 16+ records an ADMIN OPTION grant to its creator) and
    * the role's (or database's) comment is this source's token. Anything else is somebody else's.
    */
@@ -124,9 +124,9 @@ export class Hosting {
       SELECT $1, 'database', d.oid IS NOT NULL,
              COALESCE(shobj_description(d.oid, 'pg_database') = $3 AND pg_get_userbyid(d.datdba) = $4, false)
       FROM (SELECT 1) one LEFT JOIN pg_database d ON d.datname = $1`,
-      [dbName, [`${dbName}_owner`, `${dbName}_creama`], token, `${dbName}_owner`]);
+      [dbName, [`${dbName}_owner`, `${dbName}_crema`], token, `${dbName}_owner`]);
     const by = (name: string) => q.rows.find((r) => r.name === name)!;
-    return { owner: by(`${dbName}_owner`), reader: by(`${dbName}_creama`), database: by(dbName) };
+    return { owner: by(`${dbName}_owner`), reader: by(`${dbName}_crema`), database: by(dbName) };
   }
 
   /**
@@ -136,10 +136,10 @@ export class Hosting {
   async create(dbName: string, p: { token: string; ownerPassword: string; readerPassword: string }): Promise<{ owner: string; reader: string }> {
     if (!NAME.test(dbName)) throw new HostingError(`Invalid database name “${dbName}”.`);
     if (!/^[0-9a-f-]{36}$/.test(p.token)) throw new HostingError("Invalid provisioning token.");
-    const owner = `${dbName}_owner`, reader = `${dbName}_creama`, mark = literal(p.token);
+    const owner = `${dbName}_owner`, reader = `${dbName}_crema`, mark = literal(p.token);
     await this.admin(async (c) => {
-      // Serialize Creama provisioning for this name: a retry waits for (or follows) a running attempt.
-      await c.query("SELECT pg_advisory_lock(hashtext($1))", [`creama.hosting:${dbName}`]);
+      // Serialize Crema provisioning for this name: a retry waits for (or follows) a running attempt.
+      await c.query("SELECT pg_advisory_lock(hashtext($1))", [`crema.hosting:${dbName}`]);
       // PostgreSQL 16+: be able to act as the roles we create (own the database, set default privileges)
       await c.query("SET createrole_self_grant = 'set, inherit'");
       let madeOwner = false, madeReader = false, madeDatabase = false;
@@ -173,7 +173,7 @@ export class Hosting {
           await d.query(`ALTER SCHEMA public OWNER TO ${quoteIdent(owner)}`);
           await d.query(`REVOKE ALL ON SCHEMA public FROM PUBLIC`);
           await d.query(`GRANT USAGE ON SCHEMA public TO ${quoteIdent(reader)}`);
-          // whatever the app creates later is readable by Creama, and only readable
+          // whatever the app creates later is readable by Crema, and only readable
           await d.query(`ALTER DEFAULT PRIVILEGES FOR ROLE ${quoteIdent(owner)} IN SCHEMA public GRANT SELECT ON TABLES TO ${quoteIdent(reader)}`);
           await d.query(`ALTER DEFAULT PRIVILEGES FOR ROLE ${quoteIdent(owner)} IN SCHEMA public GRANT SELECT ON SEQUENCES TO ${quoteIdent(reader)}`);
         }, dbName);
@@ -189,19 +189,19 @@ export class Hosting {
         if (cleanupErrors.length) throw new HostingError(`${(e as Error).message}; cleanup incomplete: ${cleanupErrors.join("; ")}. Retrying resumes it.`);
         throw e;
       } finally {
-        await c.query("SELECT pg_advisory_unlock(hashtext($1))", [`creama.hosting:${dbName}`]).catch(() => {});
+        await c.query("SELECT pg_advisory_unlock(hashtext($1))", [`crema.hosting:${dbName}`]).catch(() => {});
       }
     });
     return { owner, reader };
   }
 
   /** New password for one of this source's roles; the old one stops working immediately. */
-  async resetPassword(dbName: string, which: "owner" | "creama", token: string): Promise<string> {
+  async resetPassword(dbName: string, which: "owner" | "crema", token: string): Promise<string> {
     if (!NAME.test(dbName)) throw new HostingError(`Invalid database name “${dbName}”.`);
     const role = `${dbName}_${which}`, pw = password();
     await this.admin(async (c) => {
       const own = await this.ownership(c, dbName, token);
-      if (!(which === "owner" ? own.owner : own.reader).ours) throw new HostingError(`${role} isn’t one Creama created for this database.`);
+      if (!(which === "owner" ? own.owner : own.reader).ours) throw new HostingError(`${role} isn’t one Crema created for this database.`);
       await c.query(`ALTER ROLE ${quoteIdent(role)} PASSWORD ${literal(pw)}`);
     });
     return pw;
@@ -211,7 +211,7 @@ export class Hosting {
   async drop(dbName: string, token: string): Promise<{ dropped: string[]; left: string[] }> {
     if (!NAME.test(dbName)) throw new HostingError(`Invalid database name “${dbName}”.`);
     return this.admin(async (c) => {
-      await c.query("SELECT pg_advisory_lock(hashtext($1))", [`creama.hosting:${dbName}`]);
+      await c.query("SELECT pg_advisory_lock(hashtext($1))", [`crema.hosting:${dbName}`]);
       try {
         const own = await this.ownership(c, dbName, token);
         const dropped: string[] = [], left: string[] = [];
@@ -223,17 +223,17 @@ export class Hosting {
         }
         return { dropped, left };
       } finally {
-        await c.query("SELECT pg_advisory_unlock(hashtext($1))", [`creama.hosting:${dbName}`]).catch(() => {});
+        await c.query("SELECT pg_advisory_unlock(hashtext($1))", [`crema.hosting:${dbName}`]).catch(() => {});
       }
     });
   }
 
-  /** Size and open connections for the databases Creama created. */
+  /** Size and open connections for the databases Crema created. */
   async info(dbNames: string[]): Promise<Record<string, HostedInfo>> {
     if (!dbNames.length) return {};
     const rows = await this.admin((c) => c.query<{ datname: string; size: string | null; conns: number }>(
       `SELECT d.datname, pg_database_size(d.datname)::text AS size, (SELECT count(*)::int FROM pg_stat_activity a WHERE a.datname = d.datname) AS conns
        FROM pg_database d WHERE d.datname = ANY($1)`, [dbNames]));
-    return Object.fromEntries(rows.rows.map((r) => [r.datname, { dbName: r.datname, owner: `${r.datname}_owner`, reader: `${r.datname}_creama`, sizeBytes: r.size == null ? null : Number(r.size), connections: r.conns }]));
+    return Object.fromEntries(rows.rows.map((r) => [r.datname, { dbName: r.datname, owner: `${r.datname}_owner`, reader: `${r.datname}_crema`, sizeBytes: r.size == null ? null : Number(r.size), connections: r.conns }]));
   }
 }

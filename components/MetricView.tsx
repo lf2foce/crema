@@ -46,10 +46,10 @@ export function MetricView({ source, metricKey, back, notify, reload, cwd, token
   if (!m) return <div className="page"><span className="spin" /></div>;
 
   const origin = typeof window !== "undefined" ? window.location.origin : "http://localhost:3300";
-  const rest = `curl -s "${origin}/api/v1/metrics/${ref}/values?grain=month&from=2026-01-01" \\\n  -H "Authorization: Bearer $CREAMA_API_TOKEN"`;
+  const rest = `curl -s "${origin}/api/v1/metrics/${ref}/values?grain=month&from=2026-01-01" \\\n  -H "Authorization: Bearer $CREMA_API_TOKEN"`;
   const mcpUrl = `${origin}/api/mcp`;
-  const mcpLocal = JSON.stringify({ mcpServers: { creama: { command: "npx", args: ["tsx", `${cwd}/bin/creama.ts`, "mcp"] } } }, null, 2);
-  const cli = `npx tsx bin/creama.ts query ${ref} --grain month --from 2026-01-01`;
+  const mcpLocal = JSON.stringify({ mcpServers: { crema: { command: "npx", args: ["tsx", `${cwd}/bin/crema.ts`, "mcp"] } } }, null, 2);
+  const cli = `npx tsx bin/crema.ts query ${ref} --grain month --from 2026-01-01`;
 
   const link = `${origin}${sourceHref(source.slug, `m/${encodeURIComponent(m.key)}`)}`;
   const sheet = `=IMPORTDATA("${origin}/api/v1/metrics/${ref}/values?grain=month&format=csv&token=YOUR_API_TOKEN")`;
@@ -133,13 +133,13 @@ export function MetricView({ source, metricKey, back, notify, reload, cwd, token
         {tab === "sheet" && <>
           <p className="use-lead">Paste into a Google Sheets cell. It refreshes with the certified number, one row per month.</p>
           <Code>{sheet}</Code>
-          <p className="use-note">Google fetches this from its own servers, so the address must be reachable from the internet; <span className="mono">localhost</span> isn’t. Excel: Data → From Web with the same URL. {tokenRequired ? <>Use the server’s <span className="mono">CREAMA_API_TOKEN</span>; anyone with the link and token can read this metric.</> : <>Set <span className="mono">CREAMA_API_TOKEN</span> on the server first: spreadsheets can’t sign in.</>}</p>
+          <p className="use-note">Google fetches this from its own servers, so the address must be reachable from the internet; <span className="mono">localhost</span> isn’t. Excel: Data → From Web with the same URL. {tokenRequired ? <>Use the server’s <span className="mono">CREMA_API_TOKEN</span>; anyone with the link and token can read this metric.</> : <>Set <span className="mono">CREMA_API_TOKEN</span> on the server first: spreadsheets can’t sign in.</>}</p>
         </>}
         {tab === "api" && <>
           <p className="use-lead">Every answer carries its provenance: version, who certified it, and <span className="mono">trust</span>.</p>
           <Code>{rest}</Code>
           <Code>{cli}</Code>
-          <p className="use-note">Software reads with the server’s <span className="mono">CREAMA_API_TOKEN</span>{tokenRequired ? "" : " (not set yet: set it to enable this)"}. Pin a version with <span className="mono">&version={m.version}</span>; add <span className="mono">&format=csv</span> for a spreadsheet.</p>
+          <p className="use-note">Software reads with the server’s <span className="mono">CREMA_API_TOKEN</span>{tokenRequired ? "" : " (not set yet: set it to enable this)"}. Pin a version with <span className="mono">&version={m.version}</span>; add <span className="mono">&format=csv</span> for a spreadsheet.</p>
         </>}
         {tab === "sql" && <>
           <p className="use-lead">The certified definition, for a BI tool or a notebook. It reads {m.dependsOn.join(", ")}.</p>

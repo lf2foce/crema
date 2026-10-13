@@ -55,7 +55,7 @@ describe("dev process lifecycle (no database or model calls)", () => {
     expect(await h.done).toBe(130);
   });
   it("a spawn error stops already-started services", async () => {
-    const h = host([command("web", "setInterval(()=>{},1000)"), { name: "worker", command: "/creama-nonexistent-command", args: [] }]);
+    const h = host([command("web", "setInterval(()=>{},1000)"), { name: "worker", command: "/crema-nonexistent-command", args: [] }]);
     expect(await h.done).toBe(1);
     expect(h.text()).toContain("worker failed to start");
   });

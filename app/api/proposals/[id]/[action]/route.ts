@@ -1,4 +1,4 @@
-import { CreamaError } from "@/core/service";
+import { CremaError } from "@/core/service";
 import { handle } from "@/lib/http";
 
 export const POST = handle(({ r, body, actor }) => {
@@ -11,6 +11,6 @@ export const POST = handle(({ r, body, actor }) => {
     case "reopen":
       return r.reopen(id, actor);
     default:
-      throw new CreamaError("Unknown action.", 404);
+      throw new CremaError("Unknown action.", 404);
   }
 });

@@ -17,18 +17,18 @@ export const googleEnabled = Boolean(process.env.GOOGLE_CLIENT_ID && process.env
 
 /**
  * Who may create the first (admin) account. On a public address anyone could claim an
- * uninitialised instance, so setup needs CREAMA_SETUP_TOKEN there; on localhost it's open
+ * uninitialised instance, so setup needs CREMA_SETUP_TOKEN there; on localhost it's open
  * unless a token is set anyway.
  */
 export function setupPolicy(): { tokenRequired: boolean; blocked: string | null } {
-  const token = process.env.CREAMA_SETUP_TOKEN;
+  const token = process.env.CREMA_SETUP_TOKEN;
   const local = ["localhost", "127.0.0.1", "::1"].includes(new URL(APP_URL).hostname);
   if (token) return { tokenRequired: true, blocked: null };
-  return local ? { tokenRequired: false, blocked: null } : { tokenRequired: true, blocked: "Set CREAMA_SETUP_TOKEN on the server to create the first account on a public address." };
+  return local ? { tokenRequired: false, blocked: null } : { tokenRequired: true, blocked: "Set CREMA_SETUP_TOKEN on the server to create the first account on a public address." };
 }
 
 function tokenMatches(given: string | null | undefined): boolean {
-  const token = process.env.CREAMA_SETUP_TOKEN;
+  const token = process.env.CREMA_SETUP_TOKEN;
   if (!token || !given) return false;
   const a = Buffer.from(given), b = Buffer.from(token);
   return a.length === b.length && timingSafeEqual(a, b);
@@ -42,7 +42,7 @@ function createAuth() {
   if (["localhost", "127.0.0.1"].includes(local.hostname)) trustedOrigins.push(APP_URL.replace(local.hostname, local.hostname === "localhost" ? "127.0.0.1" : "localhost"));
 
   return betterAuth({
-    appName: "Creama",
+    appName: "Crema",
     baseURL: APP_URL,
     secret: process.env.BETTER_AUTH_SECRET,
     database: pool,
@@ -52,19 +52,20 @@ function createAuth() {
     // an invited email signing in with Google joins the same account
     account: { accountLinking: { enabled: true, trustedProviders: ["google"] } },
     session: { expiresIn: 14 * 86_400 },
-    advanced: { cookiePrefix: "creama" },
+    advanced: { cookiePrefix: "crema" },
     databaseHooks: {
       user: {
         create: {
           before: async (user, ctx) => {
             if (ctx?.path === "/admin/create-user") return { data: user }; // an admin's invitation
             const { rows } = await pool.query<{ n: number }>(`SELECT count(*)::int AS n FROM "user"`);
-            if (rows[0].n > 0) throw new APIError("FORBIDDEN", { message: "Creama is invite-only. Ask an admin to add your email." });
+            if (rows[0].n > 0) throw new APIError("FORBIDDEN", { message: "Crema is invite-only. Ask an admin to add your email." });
             // first account: check the setup token, then claim admin atomically — of two
             // simultaneous sign-ups only the one whose INSERT lands becomes admin
             const policy = setupPolicy();
             if (policy.blocked) throw new APIError("FORBIDDEN", { message: policy.blocked });
-            const given = ctx?.headers?.get("x-creama-setup-token") ?? ctx?.request?.headers.get("x-creama-setup-token");
+            const given = ctx?.headers?.get("x-crema-setup-token") ?? ctx?.request?.headers.get("x-crema-setup-token")
+              ?? ctx?.headers?.get("x-creama-setup-token") ?? ctx?.request?.headers.get("x-creama-setup-token");
             if (policy.tokenRequired && !tokenMatches(given)) throw new APIError("FORBIDDEN", { message: "Wrong or missing setup token." });
             const claim = await pool.query(
               `INSERT INTO settings (key, value) VALUES ('admin_claimed', $1)
@@ -101,14 +102,14 @@ function createAuth() {
 }
 
 type Auth = ReturnType<typeof createAuth>;
-const g = globalThis as unknown as { __creamaAuth?: Auth };
+const g = globalThis as unknown as { __cremaAuth?: Auth };
 
 /** The auth instance without waiting for the schema: for tooling (bin/auth-schema.ts). */
 export function getAuthUnmigrated(): Auth {
-  return (g.__creamaAuth ??= createAuth());
+  return (g.__cremaAuth ??= createAuth());
 }
 
-/** The auth instance once Creama's migrations (which include Better Auth's tables) are applied. */
+/** The auth instance once Crema's migrations (which include Better Auth's tables) are applied. */
 export async function authReady(): Promise<Auth> {
   await database().ready;
   return getAuthUnmigrated();

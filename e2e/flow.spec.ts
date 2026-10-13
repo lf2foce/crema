@@ -9,7 +9,7 @@ test("set up → connect → discover → review → certify → reuse", async (
   expect((await request.get("/api/state")).status()).toBe(401);
   await page.goto("/");
   await expect(page).toHaveURL(/\/sign-in/);
-  await expect(page.getByRole("heading", { name: "Set up Creama" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Set up Crema" })).toBeVisible();
   await page.getByLabel("Name").fill("E2E Reviewer");
   await page.getByLabel("Email").fill("reviewer@example.com");
   await page.getByLabel("Password").fill("e2e-password-1");
@@ -27,7 +27,7 @@ test("set up → connect → discover → review → certify → reuse", async (
   // 3. review: open the first (most contested) proposal, with evidence on real data
   await page.getByRole("link", { name: /Review first one/ }).click();
   await expect(page.getByText("Needs your decision")).toBeVisible();
-  await expect(page.getByText("Checked by Creama against your data, not by the model")).toBeVisible();
+  await expect(page.getByText("Checked by Crema against your data, not by the model")).toBeVisible();
   await expect(page.getByText("Observed in your database")).toBeVisible();
   await expect(page.getByText("Inferred business meaning")).toBeVisible();
   const name = await page.getByLabel("Metric name").inputValue();

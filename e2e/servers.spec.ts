@@ -2,24 +2,24 @@ import { execFileSync } from "node:child_process";
 import { expect, test } from "@playwright/test";
 
 // Hosting the production way (`next start`): no "use this machine" shortcut, a server added from a
-// superuser login that Creama trades for its own limited provisioner. Uses the local cluster.
+// superuser login that Crema trades for its own limited provisioner. Uses the local cluster.
 const ADMIN_URL = "postgresql://localhost:5432/postgres";
 const DB = "app_e2e_shop";
 const psql = (sql: string) => execFileSync("psql", ["-d", "postgres", "-Atc", sql], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
 const cleanup = () => {
   psql(`DROP DATABASE IF EXISTS ${DB} WITH (FORCE)`);
-  psql(`DROP ROLE IF EXISTS ${DB}_owner`); psql(`DROP ROLE IF EXISTS ${DB}_creama`);
+  psql(`DROP ROLE IF EXISTS ${DB}_owner`); psql(`DROP ROLE IF EXISTS ${DB}_crema`);
 };
 let provisioners: string[] = [];
 
 test.beforeAll(() => {
   cleanup();
-  provisioners = psql("SELECT string_agg(rolname, ' ') FROM pg_roles WHERE rolname LIKE 'creama\\_provisioner\\_%'").split(" ").filter(Boolean);
+  provisioners = psql("SELECT string_agg(rolname, ' ') FROM pg_roles WHERE rolname LIKE 'crema\\_provisioner\\_%'").split(" ").filter(Boolean);
 });
 test.afterAll(() => {
   cleanup();
   // only the provisioner this run created
-  for (const r of psql("SELECT string_agg(rolname, ' ') FROM pg_roles WHERE rolname LIKE 'creama\\_provisioner\\_%'").split(" ").filter(Boolean)) {
+  for (const r of psql("SELECT string_agg(rolname, ' ') FROM pg_roles WHERE rolname LIKE 'crema\\_provisioner\\_%'").split(" ").filter(Boolean)) {
     if (!provisioners.includes(r)) psql(`DROP ROLE IF EXISTS ${r}`);
   }
 });
@@ -30,7 +30,7 @@ test("add a server → create a database → connect → delete → remove the s
 
   // signed in as the admin (first account on a fresh instance, or the one an earlier spec created)
   await page.goto("/sign-in");
-  const first = await page.getByRole("heading", { name: "Set up Creama" }).isVisible().catch(() => false);
+  const first = await page.getByRole("heading", { name: "Set up Crema" }).isVisible().catch(() => false);
   if (first) await page.getByLabel("Name").fill("E2E Reviewer");
   await page.getByLabel("Email").fill("reviewer@example.com");
   await page.getByLabel("Password").fill("e2e-password-1");
@@ -44,13 +44,13 @@ test("add a server → create a database → connect → delete → remove the s
   await page.getByLabel("Admin connection string").fill(ADMIN_URL);
   await page.getByLabel("Address apps use").fill("db.example.com:6543");
   await page.getByRole("button", { name: "Add server" }).click();
-  await expect(page.getByText(/Creama created its own login creama_provisioner_[0-9a-f]{6}; the superuser password wasn’t kept/)).toBeVisible();
+  await expect(page.getByText(/Crema created its own login crema_provisioner_[0-9a-f]{6}; the superuser password wasn’t kept/)).toBeVisible();
 
-  // the server page: Creama's limited login, reachable
+  // the server page: Crema's limited login, reachable
   await expect(page.getByRole("heading", { name: "db.example.com" })).toBeVisible();
   await expect(page.getByText("reachable")).toBeVisible();
   const provisioner = (await page.locator(".hosted-card .mono").first().textContent())!;
-  expect(provisioner).toMatch(/^creama_provisioner_/);
+  expect(provisioner).toMatch(/^crema_provisioner_/);
   expect(psql(`SELECT rolsuper::text || rolcreatedb::text || rolcreaterole::text FROM pg_roles WHERE rolname = '${provisioner}'`)).toBe("falsetruetrue");
 
   // a database for an app, with its connection string on the public address, TLS required

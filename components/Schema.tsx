@@ -27,7 +27,7 @@ export function Schema({ notify }: { notify: (t: string, e?: boolean) => void })
   const [onlyUsed, setOnlyUsed] = useState(false);
   const [q, setQ] = useState("");
   const canvas = useRef<HTMLDivElement>(null);
-  const storeKey = `creama.schema.${data?.database ?? "db"}`;
+  const storeKey = `crema.schema.${data?.database ?? "db"}`;
 
   useEffect(() => { api<SchemaMap>("/api/schema").then(setData).catch((e) => notify((e as Error).message, true)); }, [notify]);
 

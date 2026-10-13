@@ -3,11 +3,11 @@ import { randomUUID } from "node:crypto";
 import pg from "pg";
 import { afterAll, describe, expect, it } from "vitest";
 import { Registry } from "../core/registry";
-import { Creama } from "../core/service";
+import { Crema } from "../core/service";
 import { closePools } from "../core/warehouse";
 import { closeDatabases } from "../core/db";
 
-const url = process.env.CREAMA_SAFETY_TEST_URL;
+const url = process.env.CREMA_SAFETY_TEST_URL || process.env.CREAMA_SAFETY_TEST_URL;
 const suite = url ? describe : describe.skip;
 const schemas: string[] = [];
 const schema = () => { const s = `safety_${randomUUID().replaceAll("-", "")}`; schemas.push(s); return s; };
@@ -22,7 +22,7 @@ suite("step 1 safety regressions", () => {
   it("does not delete an existing database when provisioning or retry collides", async () => {
     const name = `app_safety_${randomUUID().replaceAll("-", "").slice(0, 12)}`;
     await admin.query(`CREATE DATABASE ${name}`);
-    const svc = new Creama(new Registry(url, { schema: schema() }));
+    const svc = new Crema(new Registry(url, { schema: schema() }));
     const { createdProvisioner } = await svc.addServer({ url: url! }, "test");
     try {
       await expect(svc.createHosted(name.replace(/^app_/, ""), "test")).rejects.toThrow(/already exists/);
@@ -41,12 +41,12 @@ suite("step 1 safety regressions", () => {
   });
 
   it("hosts through its own limited login: full lifecycle, and nothing else on the server", async () => {
-    const svc = new Creama(new Registry(url, { schema: schema() }));
+    const svc = new Crema(new Registry(url, { schema: schema() }));
     await expect(svc.createHosted("nowhere", "test")).rejects.toThrow(/Add a Postgres server first/);
     const { server, createdProvisioner } = await svc.addServer({ url: url!, name: "Local", publicHost: "db.example.com:6543" }, "test");
-    expect(createdProvisioner).toMatch(/^creama_provisioner_[0-9a-f]{6}$/);
+    expect(createdProvisioner).toMatch(/^crema_provisioner_[0-9a-f]{6}$/);
     expect(server).toMatchObject({ name: "Local", publicHost: "db.example.com:6543", ssl: true, provisioner: createdProvisioner });
-    // the superuser URL is not what Creama keeps
+    // the superuser URL is not what Crema keeps
     const stored = (await svc.reg.db.pool.query("SELECT admin_url FROM servers WHERE id = $1", [server.id])).rows[0].admin_url;
     expect(stored).not.toContain(new URL(url!).username || "@@");
     const role = (await admin.query("SELECT rolsuper, rolcreatedb, rolcreaterole, rolbypassrls FROM pg_roles WHERE rolname = $1", [createdProvisioner])).rows[0];
@@ -85,22 +85,22 @@ suite("step 1 safety regressions", () => {
       expect(await svc.servers()).toEqual([]);
     } finally {
       await admin.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
-      await admin.query(`DROP ROLE IF EXISTS ${dbName}_owner`); await admin.query(`DROP ROLE IF EXISTS ${dbName}_creama`);
+      await admin.query(`DROP ROLE IF EXISTS ${dbName}_owner`); await admin.query(`DROP ROLE IF EXISTS ${dbName}_crema`);
       await admin.query(`DROP ROLE IF EXISTS ${stranger}`); await admin.query(`DROP ROLE IF EXISTS ${createdProvisioner}`);
     }
   });
 
   it("keeps a provisioner login it is given, and offers the bundled server once", async () => {
     const c = new pg.Client({ connectionString: url }); await c.connect();
-    const role = `creama_provisioner_${randomUUID().replaceAll("-", "").slice(0, 6)}`;
+    const role = `crema_provisioner_${randomUUID().replaceAll("-", "").slice(0, 6)}`;
     await c.query(`CREATE ROLE ${role} LOGIN PASSWORD 'p' CREATEDB CREATEROLE`);
-    const preexisting = new Set((await c.query("SELECT rolname FROM pg_roles WHERE rolname LIKE 'creama\\_provisioner\\_%'")).rows.map((r) => r.rolname));
+    const preexisting = new Set((await c.query("SELECT rolname FROM pg_roles WHERE rolname LIKE 'crema\\_provisioner\\_%'")).rows.map((r) => r.rolname));
     const bundled = new URL(url!); bundled.username = role; bundled.password = "p"; bundled.pathname = "/postgres";
-    const previous = { u: process.env.CREAMA_BUNDLED_SERVER_URL, h: process.env.CREAMA_BUNDLED_SERVER_PUBLIC_HOST };
-    process.env.CREAMA_BUNDLED_SERVER_URL = bundled.toString();
-    process.env.CREAMA_BUNDLED_SERVER_PUBLIC_HOST = "db.example.com:5433";
+    const previous = { u: process.env.CREMA_BUNDLED_SERVER_URL, h: process.env.CREMA_BUNDLED_SERVER_PUBLIC_HOST };
+    process.env.CREMA_BUNDLED_SERVER_URL = bundled.toString();
+    process.env.CREMA_BUNDLED_SERVER_PUBLIC_HOST = "db.example.com:5433";
     try {
-      const svc = new Creama(new Registry(url, { schema: schema() }));
+      const svc = new Crema(new Registry(url, { schema: schema() }));
       expect((await svc.state()).suggestedServer).toEqual({ name: "Bundled server", publicHost: "db.example.com:5433" });
       // the first "New database" uses it without asking
       const name = `bundled_${randomUUID().replaceAll("-", "").slice(0, 6)}`;
@@ -108,7 +108,7 @@ suite("step 1 safety regressions", () => {
       const [server] = await svc.servers();
       expect(server).toMatchObject({ name: "Bundled server", provisioner: role, publicHost: "db.example.com:5433", ssl: true, databases: 1 });
       expect(source.serverId).toBe(server.id);
-      expect((await c.query("SELECT rolname FROM pg_roles WHERE rolname LIKE 'creama\\_provisioner\\_%' AND rolname <> $1", [role])).rows.filter((r) => !preexisting.has(r.rolname))).toEqual([]); // kept as is: no new role
+      expect((await c.query("SELECT rolname FROM pg_roles WHERE rolname LIKE 'crema\\_provisioner\\_%' AND rolname <> $1", [role])).rows.filter((r) => !preexisting.has(r.rolname))).toEqual([]); // kept as is: no new role
       await svc.removeSource(source.id, "test");
       expect((await svc.state()).suggestedServer).toBeNull();
       await expect(svc.addSuggestedServer("test")).rejects.toThrow(/already exists/);
@@ -116,7 +116,7 @@ suite("step 1 safety regressions", () => {
       await c.query(`ALTER ROLE ${role} NOCREATEROLE`);
       await expect(svc.addServer({ url: bundled.toString(), name: "weak" }, "test")).rejects.toThrow(/needs CREATEDB and CREATEROLE/);
     } finally {
-      for (const [k, v] of [["CREAMA_BUNDLED_SERVER_URL", previous.u], ["CREAMA_BUNDLED_SERVER_PUBLIC_HOST", previous.h]] as const) {
+      for (const [k, v] of [["CREMA_BUNDLED_SERVER_URL", previous.u], ["CREMA_BUNDLED_SERVER_PUBLIC_HOST", previous.h]] as const) {
         if (v === undefined) delete process.env[k]; else process.env[k] = v;
       }
       await c.query(`DROP ROLE IF EXISTS ${role}`); await c.end();
@@ -126,7 +126,7 @@ suite("step 1 safety regressions", () => {
   it("checks the pinned version's tables without poisoning the current version", async () => {
     const s = schema();
     await admin.query(`CREATE SCHEMA ${s}; CREATE TABLE ${s}.old_orders (id int); CREATE TABLE ${s}.new_orders (id int); INSERT INTO ${s}.old_orders VALUES (1); INSERT INTO ${s}.new_orders VALUES (2)`);
-    const base = new Creama(new Registry(url, { schema: schema() }));
+    const base = new Crema(new Registry(url, { schema: schema() }));
     const { source } = await base.addExternal(url!, "test", "Safety");
     const svc = await base.withSource(source.id);
     await svc.create({ edits: { key: "orders", name: "Orders", kind: "snapshot", unit: "count", sql: `SELECT count(*) AS value FROM ${s}.old_orders` }, actor: "test" });

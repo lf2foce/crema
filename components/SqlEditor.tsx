@@ -7,8 +7,8 @@ import { DataGrid, download, highlight, toCsv, useLines, type GridColumn } from 
 type Result = { columns: GridColumn[]; rows: unknown[][]; rowCount: number; truncated: boolean; ms: number; bound: Record<string, string> | null };
 type Doc = { id: number | null; name: string; sql: string };
 
-const DRAFT = "creama.sql.draft";
-export const OPEN_IN_EDITOR = "creama.sql.open"; // the table browser hands a query over through this key
+const DRAFT = "crema.sql.draft";
+export const OPEN_IN_EDITOR = "crema.sql.open"; // the table browser hands a query over through this key
 const store = {
   get<T>(k: string): T | null { try { const v = localStorage.getItem(k); return v ? (JSON.parse(v) as T) : null; } catch { return null; } },
   set(k: string, v: unknown) { try { v === null ? localStorage.removeItem(k) : localStorage.setItem(k, JSON.stringify(v)); } catch { /* private mode */ } },

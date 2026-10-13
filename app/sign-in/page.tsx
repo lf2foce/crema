@@ -12,7 +12,7 @@ export default function SignIn() {
   const [error, setError] = useState<string | null>(null);
   const [down, setDown] = useState<string | null>(null);
   useEffect(() => {
-    fetch("/api/setup").then((r) => r.json()).then((d) => (d.error ? setDown(d.error) : setSetup(d))).catch(() => setDown("Creama isn’t reachable."));
+    fetch("/api/setup").then((r) => r.json()).then((d) => (d.error ? setDown(d.error) : setSetup(d))).catch(() => setDown("Crema isn’t reachable."));
   }, []);
 
   const oauth = typeof window !== "undefined" && new URLSearchParams(window.location.search).has("client_id");
@@ -26,7 +26,7 @@ export default function SignIn() {
     setBusy(true); setError(null);
     const res = setup?.hasUsers
       ? await authClient.signIn.email({ email, password })
-      : await authClient.signUp.email({ name, email, password }, { headers: token ? { "x-creama-setup-token": token } : {} });
+      : await authClient.signUp.email({ name, email, password }, { headers: token ? { "x-crema-setup-token": token } : {} });
     setBusy(false);
     if (res.error) setError(res.error.message ?? "Could not sign in.");
     else done(res.data);
@@ -37,12 +37,12 @@ export default function SignIn() {
     if (res.error) { setBusy(false); setError(res.error.message ?? "Google sign-in failed."); }
   };
 
-  if (down) return <div className="connect auth"><h1>Creama can’t start</h1><p className="auth-card m-0">{down}</p></div>;
+  if (down) return <div className="connect auth"><h1>Crema can’t start</h1><p className="auth-card m-0">{down}</p></div>;
   if (!setup) return <div className="center"><span className="spin" /></div>;
   const first = !setup.hasUsers;
   return (
     <div className="connect auth">
-      <h1>{first ? "Set up Creama" : oauth ? "Sign in to connect your AI assistant" : "Sign in to Creama"}</h1>
+      <h1>{first ? "Set up Crema" : oauth ? "Sign in to connect your AI assistant" : "Sign in to Crema"}</h1>
       <form className="auth-card" onSubmit={submit}>
         {first && <p className="use-note">You’re the first person here, so this account becomes the admin. Others join when you invite them.</p>}
         {first && setup.setupBlocked && <p className="small text-fail m-0">{setup.setupBlocked}</p>}

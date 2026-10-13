@@ -1,4 +1,4 @@
-// What makes a hosted database (and its roles) Creama's to resume, rotate or drop: a token stored
+// What makes a hosted database (and its roles) Crema's to resume, rotate or drop: a token stored
 // here before anything is created, and written as the COMMENT on the database and both roles.
 // Its passwords are stored before anything is created too, so a crash mid-way can be resumed.
 export default `

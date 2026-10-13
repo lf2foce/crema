@@ -252,7 +252,7 @@ export function ProposalView({ concept, queue, runId, model, back, notify, onCer
                 </div>
               </details>
             )}
-            <p className="ev-foot">Checked by Creama against your data, not by the model.</p>
+            <p className="ev-foot">Checked by Crema against your data, not by the model.</p>
           </div>
 
           <div className="ev-card inferred">

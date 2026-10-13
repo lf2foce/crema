@@ -1,8 +1,8 @@
-# Creama
+# Crema
 
 **Connect Postgres. AI proposes your business metrics and shows its evidence. You certify what's true. Software and AI reuse only what you certified.**
 
-Creama reads your schema, profiles it, and proposes the handful of metrics your business actually runs on: MRR, active customers, churn, and so on. Where a metric has more than one plausible definition, it computes all of them on your data, **traces the gap to individual rows, and explains it**:
+Crema reads your schema, profiles it, and proposes the handful of metrics your business actually runs on: MRR, active customers, churn, and so on. Where a metric has more than one plausible definition, it computes all of them on your data, **traces the gap to individual rows, and explains it**:
 
 > *61 subscriptions are counted only by "All active contracts including trials" ($8,764 of the gap). 100% of them have status = 'trialing', versus 0% of the rest.*
 
@@ -15,18 +15,18 @@ proposed by the model  →  checked against your data  →  certified by a perso
 
 ## Quickstart
 
-Requirements: Node 22.13+, pnpm, PostgreSQL (for Creama's own state, and the demo), an API key for an approved schema-output model (Google by default).
+Requirements: Node 22.13+, pnpm, PostgreSQL (for Crema's own state, and the demo), an API key for an approved schema-output model (Google by default).
 
 ```sh
 pnpm install
 cp .env.example .env.local        # GEMINI_API_KEY, BETTER_AUTH_SECRET, DATABASE_URL
-createdb creama                   # Creama's state; tables are created on first start
+createdb crema                   # Crema's state; tables are created on first start
 pnpm demo:db                      # creates the "Lumen" demo SaaS database + a read-only role
 pnpm dev                         # migrate, then web + worker; http://localhost:3300
 # Ctrl+C stops both. Production: migrate first, then run web and worker independently.
 ```
 
-The first person to open it creates the admin account; after that Creama is invite-only (admins add people under their name in the status bar). Email + password, or Google for invited emails when `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` are set.
+The first person to open it creates the admin account; after that Crema is invite-only (admins add people under their name in the status bar). Email + password, or Google for invited emails when `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` are set.
 
 Docker: copy `.env.docker.example` to `.env.docker.local`, fill the secrets, then
 `docker compose --env-file .env.docker.local up --build -d`.
@@ -34,16 +34,16 @@ See [deployment instructions](docs/deployment.md) for lifecycle, migrations and 
 
 Each database you connect (or create) is a **source** in the workspace: it has its own schema map, tables, SQL editor, proposals and certified metrics, at `/s/<source>`. A metric always runs on the source it was certified on. Add more from **databases** in the status bar.
 
-Click **Try it on a demo SaaS database**. About a minute later you're reviewing proposals. To use your own database, paste a connection string (preferably a read-only role) or set `CREAMA_DATABASE_URL`.
+Click **Try it on a demo SaaS database**. About a minute later you're reviewing proposals. To use your own database, paste a connection string (preferably a read-only role) or set `CREMA_DATABASE_URL`.
 
 The demo database is deliberately messy, like real ones: amounts in cents, tax on invoices, annual plans, trials, past-due subscriptions, internal accounts, soft-deleted rows, voided invoices, refunds and plan upgrades.
 
 ## Reuse certified metrics
 
-Only certified metrics are visible to consumers. Every answer carries its provenance. Software authenticates with `CREAMA_API_TOKEN` (set it on the server); people use their session.
+Only certified metrics are visible to consumers. Every answer carries its provenance. Software authenticates with `CREMA_API_TOKEN` (set it on the server); people use their session.
 
 ```sh
-H="Authorization: Bearer $CREAMA_API_TOKEN"
+H="Authorization: Bearer $CREMA_API_TOKEN"
 curl -H "$H" "localhost:3300/api/v1/metrics"                                        # every certified metric, with its ref
 curl -H "$H" "localhost:3300/api/v1/metrics/demo/mrr/values?grain=month&from=2026-01-01"   # <source>/<key>
 curl -H "$H" "localhost:3300/api/v1/metrics/demo/mrr/values?version=1"                    # pin a version
@@ -65,17 +65,17 @@ curl "localhost:3300/api/v1/metrics/demo/mrr/values?grain=month&format=csv&token
 Locally, the same tools over stdio:
 
 ```json
-{ "mcpServers": { "creama": { "command": "npx", "args": ["tsx", "/path/to/creama/bin/creama.ts", "mcp"] } } }
+{ "mcpServers": { "crema": { "command": "npx", "args": ["tsx", "/path/to/crema/bin/crema.ts", "mcp"] } } }
 ```
 
 **CLI**
 
 ```sh
-pnpm creama sources                       # databases in the workspace
-pnpm creama discover --source demo        # same discovery, in the terminal
-pnpm creama list
-pnpm creama query demo/mrr --grain quarter --from 2025-10-01
-pnpm creama audit
+pnpm crema sources                       # databases in the workspace
+pnpm crema discover --source demo        # same discovery, in the terminal
+pnpm crema list
+pnpm crema query demo/mrr --grain quarter --from 2025-10-01
+pnpm crema audit
 ```
 
 ## Hosted databases
@@ -83,20 +83,20 @@ pnpm creama audit
 Admins can create Postgres databases for apps built elsewhere (Databases → New database), Neon-style: pick a database, choose the login, copy the connection string or a ready snippet (`.env`, psql, Node.js, Drizzle, Python). Each database gets:
 
 - an owner login for the app: read/write in its own database only (no superuser, can't create roles or databases, 20 connections)
-- a read-only login Creama uses when you choose **Use in Creama**, so the app's data can be discovered and certified like any other source
+- a read-only login Crema uses when you choose **Use in Crema**, so the app's data can be discovered and certified like any other source
 
-Passwords are stored sealed with AES-256-GCM (key: `CREAMA_ENCRYPTION_KEY`, else derived from `BETTER_AUTH_SECRET` — changing it makes stored passwords unreadable; reset them). Hosted databases can't connect to each other (`CONNECT` is revoked from `PUBLIC`). Deleting asks for the database name and is refused while Creama is analysing it.
+Passwords are stored sealed with AES-256-GCM (key: `CREMA_ENCRYPTION_KEY`, else derived from `BETTER_AUTH_SECRET` — changing it makes stored passwords unreadable; reset them). Hosted databases can't connect to each other (`CONNECT` is revoked from `PUBLIC`). Deleting asks for the database name and is refused while Crema is analysing it.
 
 Where databases are created: on a **server** an admin adds (Databases → Servers → Add), PostgreSQL 16 or newer. Give it an admin login once:
 
-- a superuser login is used for one statement, to create Creama's own `creama_provisioner_…` role with only `CREATEDB CREATEROLE`; the superuser password is not stored
-- or create such a role yourself and give Creama that login
+- a superuser login is used for one statement, to create Crema's own `crema_provisioner_…` role with only `CREATEDB CREATEROLE`; the superuser password is not stored
+- or create such a role yourself and give Crema that login
 
-On PostgreSQL 16+ a role with `CREATEROLE` can only change or drop roles it created, so Creama can't touch other roles or databases on the server. A server can be removed once it holds no databases; its provisioner role stays there for you to drop.
+On PostgreSQL 16+ a role with `CREATEROLE` can only change or drop roles it created, so Crema can't touch other roles or databases on the server. A server can be removed once it holds no databases; its provisioner role stays there for you to drop.
 
-Use a server of its own, not the one in `DATABASE_URL`: apps' load and disk use would hit Creama's state, app databases must be reachable from the internet while Creama's state shouldn't be, and cluster-level restores would rewind both. Serve it over TLS with `scram-sha-256` in `pg_hba.conf`, and back it up at the cluster level (e.g. pgBackRest). **New database** needs no setup when the installation has its own server: the Compose bundle's `hosting` service (`CREAMA_BUNDLED_SERVER_URL`, a provisioner login), or in development the server in `DATABASE_URL`; it's added the first time a database is created. Production never uses Creama's state server. Not yet: branching, per-database backups, size quotas, connection pooling.
+Use a server of its own, not the one in `DATABASE_URL`: apps' load and disk use would hit Crema's state, app databases must be reachable from the internet while Crema's state shouldn't be, and cluster-level restores would rewind both. Serve it over TLS with `scram-sha-256` in `pg_hba.conf`, and back it up at the cluster level (e.g. pgBackRest). **New database** needs no setup when the installation has its own server: the Compose bundle's `hosting` service (`CREMA_BUNDLED_SERVER_URL`, a provisioner login), or in development the server in `DATABASE_URL`; it's added the first time a database is created. Production never uses Crema's state server. Not yet: branching, per-database backups, size quotas, connection pooling.
 
-## What Creama checks (without the model)
+## What Crema checks (without the model)
 
 Each proposed definition is executed and inspected by code before you see it, and again at the moment you certify it:
 
@@ -109,11 +109,11 @@ Each proposed definition is executed and inspected by code before you see it, an
 
 ## Security and privacy
 
-- Every query runs in `BEGIN READ ONLY` with a statement timeout and is always rolled back. Use a read-only role anyway; Creama tells you if yours can write.
+- Every query runs in `BEGIN READ ONLY` with a statement timeout and is always rolled back. Use a read-only role anyway; Crema tells you if yours can write.
 - The model receives only schema, row counts, null rates, min/max, and the value distributions of low-cardinality columns. Columns whose names suggest personal data (email, phone, name, address…) are never value-profiled. The exact payload is stored and viewable in the app.
 - Example rows (to explain disagreements) are shown only to you and never sent to the model.
-- Creama's state lives in Postgres (`DATABASE_URL`), separate from the database it analyses. Certified versions are immutable and the audit log is append-only, enforced by triggers (no UPDATE or DELETE).
-- Every route requires a signed-in person; the certifier is the signed-in account, not a typed name. Only admins change the analysed database or invite people. `/api/v1` also accepts `CREAMA_API_TOKEN` for software.
+- Crema's state lives in Postgres (`DATABASE_URL`), separate from the database it analyses. Certified versions are immutable and the audit log is append-only, enforced by triggers (no UPDATE or DELETE).
+- Every route requires a signed-in person; the certifier is the signed-in account, not a typed name. Only admins change the analysed database or invite people. `/api/v1` also accepts `CREMA_API_TOKEN` for software.
 - The SQL editor and table browser show raw rows to signed-in people (one read-only `SELECT`/`WITH` at a time). MCP clients never see raw tables: only certified metrics.
 - Each source's connection string, each server's provisioner login and each hosted database's passwords are sealed with AES-256-GCM in the state database. Keep the encryption key backed up separately and restrict access to both.
 
@@ -129,7 +129,7 @@ the earlier proposals; certified versions remain immutable. Deploy the worker as
 not a request handler. Without it jobs remain queued. This does not provide exactly-once external model calls.
 The domain lives in `core/` and knows nothing about Next; adapters stay thin.
 
-The same worker runs a persistent hourly schema-drift schedule (`CREAMA_DRIFT_CRON`, UTC cron;
+The same worker runs a persistent hourly schema-drift schedule (`CREMA_DRIFT_CRON`, UTC cron;
 `off` disables it). It inspects source schemas without calling Gemini or calculating metric values.
 Changed metrics become `needs_attention`; alerts are recorded in the audit log and visible in the app.
 This is schema drift, not business-semantic drift or data-freshness monitoring. No email/Telegram
@@ -151,8 +151,8 @@ core/mcpTools.ts    the MCP tools, shared by stdio and HTTP
 lib/auth.ts         Better Auth: sign-in, invitations, OAuth server for MCP
 core/service.ts     the application API
 app/api/**          HTTP adapter (app/api/v1 = the consumer API)
-bin/creama.ts       CLI + stdio MCP server
-bin/import-sqlite.ts one-off import of a pre-Postgres .creama/creama.db
+bin/crema.ts       CLI + stdio MCP server
+bin/import-sqlite.ts one-off import of a pre-Postgres .crema/crema.db
 ```
 
 Why, and what was deliberately left out: [PRODUCT.md](PRODUCT.md).
@@ -160,7 +160,7 @@ Why, and what was deliberately left out: [PRODUCT.md](PRODUCT.md).
 ## Tests
 
 ```sh
-pnpm test          # unit + integration against the demo database; state in throwaway schemas of creama_test
+pnpm test          # unit + integration against the demo database; state in throwaway schemas of crema_test
 pnpm test:e2e      # the full loop in a browser, with the real model: connect → discover → certify → API
 ```
 

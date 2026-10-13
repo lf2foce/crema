@@ -1,4 +1,4 @@
-# Creama — product thinking
+# Crema — product thinking
 
 > AI proposes business meaning. Data checks it. A human certifies it.
 > Everything downstream consumes only what was certified.
@@ -64,7 +64,7 @@ of that unit.
 > Connect → ~60 seconds → "We found 7 metrics in your business. 3 have competing definitions.
 > Start there." → MRR: two definitions side by side on your data, $172,244 vs $181,008 →
 > *"61 subscriptions are counted only by 'All active contracts including trials' ($8,764 of the
-> gap). 100% of them have status = 'trialing'"* → pick one → Creama.
+> gap). 100% of them have status = 'trialing'"* → pick one → Crema.
 > → `curl /api/v1/metrics/mrr/values` and Claude via MCP now return the same number, with
 > "v1, certified by Anh".
 
@@ -123,7 +123,7 @@ server only exposes certified metrics); B can be an export later.
 1. **Connect** — a single field (or "use the demo database"). Under it, the trust
    contract in one line: read-only transactions, 8s timeout, no rows leave your server;
    only schema statistics go to the model — with a link to the exact payload. If the
-   role can write, Creama says so and gives the SQL for a read-only role.
+   role can write, Crema says so and gives the SQL for a read-only role.
 2. **Understanding** — a live log of what it's doing, with real numbers as they arrive
    ("public.invoices · 6,224 rows · status: paid 94%, void 2%…"; "Monthly Recurring
    Revenue · $172.2k · 2 definitions disagree by 5%"). The wait is the product showing its work.
@@ -138,7 +138,7 @@ server only exposes certified metrics); B can be an export later.
    - **checks** run by code, not the model (soft-deletes ignored? internal accounts?
      cents? mixed currency? `now()` making it non-reproducible?)
    - SQL is visible but folded; editing it re-runs every check before you can certify
-   - one primary action: **Creama "<definition>" as <Metric>**
+   - one primary action: **Crema "<definition>" as <Metric>**
 
 **Uncertainty** is communicated as words + reasons, never fake percentages:
 *High / Medium / Low — because …*, and contradicted by red checks when the data
@@ -164,7 +164,7 @@ Postgres (customer, read-only) ──► core/warehouse  (READ ONLY txn, timeout
 ```
 
 - **One process, one file of state.** Next.js app (UI + route handlers) and a SQLite
-  file (`node:sqlite`, no native deps) under `.creama/`. No queue, no Redis, no
+  file (`node:sqlite`, no native deps) under `.crema/`. No queue, no Redis, no
   second database. Discovery runs in-process and persists its progress, so the UI
   just polls.
 - **The core knows nothing about Next.** `core/service.ts` is the application API; the
@@ -187,7 +187,7 @@ Postgres (customer, read-only) ──► core/warehouse  (READ ONLY txn, timeout
 ## Phase 5 — Critique (written after building it)
 
 **What is genuinely differentiated.** Disagreement as the interface. Every tool can list "Revenue,
-MRR, Active users". Creama computes competing definitions on the user's data, splits the gap into
+MRR, Active users". Crema computes competing definitions on the user's data, splits the gap into
 rows only A counts, rows only B counts and rows both count but value differently, and explains each
 part deterministically: "61 subscriptions … ($8,764 of the gap), 100% have status = 'trialing'".
 The second differentiator is that trust is enforced in code, not described in docs: consumers
@@ -213,7 +213,7 @@ stops looking like BI.
 certified metrics* once more than one person depends on them: SSO and roles (who can certify finance
 metrics), scheduled re-verification with alerts when a certified number moves for a non-business
 reason (backfill, schema change, a new status value), and an MCP/API gateway for company-wide AI
-with per-question audit. Hosted Creama = that loop, managed.
+with per-question audit. Hosted Crema = that loop, managed.
 
 **Why someone would install the OSS version.** Because in ten minutes it turns an unfamiliar
 Postgres into a short list of reviewed, versioned metrics without writing YAML, and it makes

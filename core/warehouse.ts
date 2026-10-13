@@ -9,7 +9,7 @@ export { SqlContractError } from "./sqlGuard";
 pg.types.setTypeParser(1700, (v) => (v === null ? null : Number(v)));
 pg.types.setTypeParser(20, (v) => (v === null ? null : Number(v)));
 
-const pools: Map<string, pg.Pool> = ((globalThis as any).__creamaPools ??= new Map());
+const pools: Map<string, pg.Pool> = ((globalThis as any).__cremaPools ??= new Map());
 
 function pool(url: string): pg.Pool {
   let p = pools.get(url);

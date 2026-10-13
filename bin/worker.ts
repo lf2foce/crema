@@ -9,7 +9,7 @@ const { closePools } = await import("../core/warehouse");
 const reg = new Registry();
 await startDiscoveryWorker(reg);
 await startDriftWorker(reg);
-console.log("Creama discovery worker ready");
+console.log("Crema discovery worker ready");
 let stopping = false;
 async function stop() {
   if (stopping) return; stopping = true;

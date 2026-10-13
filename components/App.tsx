@@ -85,7 +85,7 @@ export function App({ sourceSlug }: { sourceSlug: string | null }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [sel, state]);
 
-  if (error && !state) return <Shell sel={sel}><div className="center"><div className="hero"><h1>Can’t reach Creama</h1><p className="lead">{error}</p><button className="btn" onClick={reload}>Retry</button></div></div></Shell>;
+  if (error && !state) return <Shell sel={sel}><div className="center"><div className="hero"><h1>Can’t reach Crema</h1><p className="lead">{error}</p><button className="btn" onClick={reload}>Retry</button></div></div></Shell>;
   if (!state) return <Shell sel={sel}><div className="center"><span className="spin" /></div></Shell>;
   const admin = state.me?.role === "admin";
   const toastEl = toast && <Toast {...toast} />;
@@ -178,7 +178,7 @@ function Shell({ state, sel, children }: { state?: AppState; sel: Sel; children:
     <>
       <header className="statusbar">
         <span className="sb-left">
-          {src && inner ? <a href="#" className="on">← all metrics</a> : <a href="/#databases">creama</a>}
+          {src && inner ? <a href="#" className="on">← all metrics</a> : <a href="/#databases">crema</a>}
           <span>—</span>
           {state && state.sources.length > 0 ? (
             <select className="sb-select" aria-label="Database" value={src?.slug ?? ""} onChange={(e) => { window.location.href = e.target.value ? sourceHref(e.target.value) : "/#databases"; }}>
@@ -186,7 +186,7 @@ function Shell({ state, sel, children }: { state?: AppState; sel: Sel; children:
               {state.sources.map((x) => <option key={x.id} value={x.slug}>{x.name}{x.status !== "ready" ? ` (${x.status})` : ""}</option>)}
             </select>
           ) : <span>no database yet</span>}
-          {src && !src.readOnly && <span className="warn" title={`This login can write to ${src.writableTables} tables. Creama only runs read-only transactions, but a read-only login is safer.`}>(login can write)</span>}
+          {src && !src.readOnly && <span className="warn" title={`This login can write to ${src.writableTables} tables. Crema only runs read-only transactions, but a read-only login is safer.`}>(login can write)</span>}
           {sel.type === "metric" && <span className="ellipsis">/ {sel.key}</span>}
           {sel.type === "proposal" && <span className="ellipsis">/ {state?.proposals.find((p) => p.id === sel.id)?.key ?? "proposal"}</span>}
         </span>
@@ -269,7 +269,7 @@ function Connect({ state, notify }: { state: AppState; notify: (t: string, e?: b
           )}
         </div>
       </form>
-      {(state.servers.length > 0 || state.suggestedServer) && <p className="connect-alt">No database yet? <a href="/#databases">Create one</a> for your app; Creama can analyse it too.</p>}
+      {(state.servers.length > 0 || state.suggestedServer) && <p className="connect-alt">No database yet? <a href="/#databases">Create one</a> for your app; Crema can analyse it too.</p>}
       <div className="trust-row">
         <span>Never writes to your database</span>
         <span title={`Model: ${state.model.name}`}>No rows sent to the AI</span>
@@ -388,7 +388,7 @@ function FirstRun({ state, reload, notify }: { state: AppState; reload: () => vo
       <div className="hero">
         <div className="eyebrow">{state.source?.name}</div>
         <h1>{state.run?.status === "failed" ? "Discovery didn’t finish" : "Ready when you are"}</h1>
-        <p className="lead">{state.run?.error ?? (state.model.configured ? "Let Creama propose the metrics your business runs on, or write one you already know." : "Set GEMINI_API_KEY in your environment and restart Creama so it can propose metrics. You can also create a metric by hand.")}</p>
+        <p className="lead">{state.run?.error ?? (state.model.configured ? "Let Crema propose the metrics your business runs on, or write one you already know." : "Set GEMINI_API_KEY in your environment and restart Crema so it can propose metrics. You can also create a metric by hand.")}</p>
         <div className="row wrap">
           <button className="btn primary lg" disabled={!state.model.configured} onClick={async () => { try { await api("/api/discover", { body: {} }); reload(); } catch (e) { notify((e as Error).message, true); } }}>Discover metrics</button>
           <a className="btn lg" href="#new">Create metric by hand</a>

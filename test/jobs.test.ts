@@ -6,7 +6,7 @@ import { Registry } from "../core/registry";
 import { closeDatabases } from "../core/db";
 import { closeJobs, DISCOVERY_QUEUE, DRIFT_QUEUE, enqueueDiscovery, jobs, processDiscovery, queueSchema, startDriftWorker, type DiscoveryTask } from "../core/jobs";
 
-const url = process.env.CREAMA_SAFETY_TEST_URL;
+const url = process.env.CREMA_SAFETY_TEST_URL || process.env.CREAMA_SAFETY_TEST_URL;
 const suite = url ? describe : describe.skip;
 const schema = `queue_${randomUUID().replaceAll("-", "")}`;
 let reg: Registry;
@@ -25,7 +25,7 @@ suite("persistent discovery", () => {
     const ids = await Promise.all([enqueueDiscovery(reg, input), enqueueDiscovery(reg, input)]);
     expect(ids[0]).toBe(ids[1]);
     let boss = await jobs(reg);
-    const child = fork("test/queue-claim.ts", { execArgv: ["--import", "tsx"], env: { ...process.env, CREAMA_QUEUE_TEST_SCHEMA: schema }, stdio: ["ignore", "ignore", "pipe", "ipc"] });
+    const child = fork("test/queue-claim.ts", { execArgv: ["--import", "tsx"], env: { ...process.env, CREMA_QUEUE_TEST_SCHEMA: schema }, stdio: ["ignore", "ignore", "pipe", "ipc"] });
     const first = await new Promise<Awaited<ReturnType<typeof boss.fetch<DiscoveryTask>>>[number]>((resolve, reject) => {
       const timer = setTimeout(() => { child.kill("SIGKILL"); reject(new Error("Claim subprocess timed out")); }, 8000);
       child.once("message", (message) => { clearTimeout(timer); resolve(message as any); });

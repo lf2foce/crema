@@ -1,13 +1,13 @@
 // Hosted databases against the local cluster, the way production runs them: through a provisioner
 // (CREATEDB CREATEROLE, not a superuser) that a superuser login creates once
-// (CREAMA_TEST_HOSTING_ADMIN_URL, default: the local superuser). Local pg_hba is usually `trust`,
+// (CREMA_TEST_HOSTING_ADMIN_URL, default: the local superuser). Local pg_hba is usually `trust`,
 // so this checks privileges and isolation; password checks only bite where scram is enforced.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import pg from "pg";
 import { randomUUID } from "node:crypto";
 import { Hosting, password } from "../core/hosting";
 
-const ADMIN = process.env.CREAMA_TEST_HOSTING_ADMIN_URL ?? "postgresql://localhost:5432/postgres";
+const ADMIN = process.env.CREMA_TEST_HOSTING_ADMIN_URL || process.env.CREAMA_TEST_HOSTING_ADMIN_URL || "postgresql://localhost:5432/postgres";
 let h: Hosting;
 // what the service stores before provisioning: a token per database and both passwords
 const make = (dbName: string) => ({ dbName, token: randomUUID(), ownerPassword: password(), readerPassword: password() });
@@ -51,7 +51,7 @@ describe("hosted databases", () => {
     await expect(Hosting.dropRole(ADMIN, "postgres")).rejects.toThrow(/Not a provisioner/);
   });
 
-  it("creates an isolated database an app can use and Creama can only read", async () => {
+  it("creates an isolated database an app can use and Crema can only read", async () => {
     if (!available) return;
     expect(A).toMatch(/^app_ztest_/);
     const a = await h.create(A, TA);
@@ -64,7 +64,7 @@ describe("hosted databases", () => {
       await c.query("CREATE TABLE orders (id serial PRIMARY KEY, total int)");
       await c.query("INSERT INTO orders (total) VALUES (10), (20)");
     });
-    // Creama: reads what the app created later, writes nothing
+    // Crema: reads what the app created later, writes nothing
     await as(a.reader, A, async (c) => {
       expect((await c.query("SELECT sum(total)::int AS s FROM orders")).rows[0].s).toBe(30);
       await expect(c.query("INSERT INTO orders (total) VALUES (1)")).rejects.toThrow(/read-only/);
@@ -89,12 +89,12 @@ describe("hosted databases", () => {
     const after = (await admin.query("SELECT rolpassword FROM pg_authid WHERE rolname = $1", [`${A}_owner`])).rows[0].rolpassword;
     expect(pw).not.toHaveLength(0);
     expect(after).not.toBe(before);
-    await expect(h.resetPassword(A, "owner", TB.token)).rejects.toThrow(/isn’t one Creama created/); // another source's token
+    await expect(h.resetPassword(A, "owner", TB.token)).rejects.toThrow(/isn’t one Crema created/); // another source's token
     await expect(h.create(`${A}; DROP DATABASE x`, TA)).rejects.toThrow(/Invalid database name/);
     await expect(h.create(A, make(A))).rejects.toThrow(/already exists/); // same name, different source
 
-    expect(await h.drop(A, TB.token)).toEqual({ dropped: [], left: [A, `${A}_creama`, `${A}_owner`] }); // not B's to drop
-    expect((await h.drop(A, TA.token)).dropped).toEqual([A, `${A}_creama`, `${A}_owner`]);
+    expect(await h.drop(A, TB.token)).toEqual({ dropped: [], left: [A, `${A}_crema`, `${A}_owner`] }); // not B's to drop
+    expect((await h.drop(A, TA.token)).dropped).toEqual([A, `${A}_crema`, `${A}_owner`]);
     const left = await admin.query("SELECT (SELECT count(*) FROM pg_database WHERE datname = $1)::int + (SELECT count(*) FROM pg_roles WHERE rolname LIKE $1 || '\\_%')::int AS n", [A]);
     expect(left.rows[0].n).toBe(0);
     await admin.end();
@@ -122,7 +122,7 @@ describe("hosted databases", () => {
       expect((await admin.query("SELECT 1 FROM pg_database WHERE datname = $1", [C])).rowCount).toBe(1);
     } finally {
       await admin.query(`DROP DATABASE IF EXISTS ${C} WITH (FORCE)`);
-      await admin.query(`DROP ROLE IF EXISTS ${C}_owner`); await admin.query(`DROP ROLE IF EXISTS ${C}_creama`);
+      await admin.query(`DROP ROLE IF EXISTS ${C}_owner`); await admin.query(`DROP ROLE IF EXISTS ${C}_crema`);
       await admin.end();
     }
   });

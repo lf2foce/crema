@@ -152,7 +152,7 @@ export interface Comparison {
 
 export type ConceptStatus = "open" | "certified" | "rejected" | "superseded";
 
-/** A database Creama analyses: one you connected (external) or one it created for an app (hosted). */
+/** A database Crema analyses: one you connected (external) or one it created for an app (hosted). */
 export interface Source {
   id: number;
   workspaceId: string;
@@ -170,7 +170,7 @@ export interface Source {
   createdAt: string;
 }
 
-/** A Postgres server Creama administers through its own provisioner login, to create databases for apps. */
+/** A Postgres server Crema administers through its own provisioner login, to create databases for apps. */
 export interface Server {
   id: number;
   workspaceId: string;

@@ -1,11 +1,11 @@
-// Postgres servers Creama administers. Hosted databases live on one of these, never on the server
-// that holds Creama's own state by accident: a server is something an admin adds, on purpose.
+// Postgres servers Crema administers. Hosted databases live on one of these, never on the server
+// that holds Crema's own state by accident: a server is something an admin adds, on purpose.
 export default `
 CREATE TABLE servers (
   id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   workspace_id text NOT NULL REFERENCES "organization" ("id") ON DELETE CASCADE,
   name text NOT NULL,
-  admin_url text NOT NULL,          -- sealed: Creama's own provisioner login (CREATEDB CREATEROLE, never a superuser)
+  admin_url text NOT NULL,          -- sealed: Crema's own provisioner login (CREATEDB CREATEROLE, never a superuser)
   provisioner text NOT NULL,        -- that login's role name, shown to admins
   public_host text NOT NULL,        -- host:port apps connect to
   ssl boolean NOT NULL,             -- apps must use TLS (sslmode=require in their connection strings)

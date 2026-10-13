@@ -141,7 +141,7 @@ describe("schema map layout", async () => {
 describe("sealed secrets", async () => {
   const { seal, unseal } = await import("../core/secret");
   it("round-trips, never repeats ciphertext, and rejects tampering", () => {
-    process.env.CREAMA_ENCRYPTION_KEY ??= "test-key-for-unit-tests";
+    process.env.CREMA_ENCRYPTION_KEY ??= "test-key-for-unit-tests";
     const a = seal("p@ss"), b = seal("p@ss");
     expect(a).not.toBe(b);
     expect(a).not.toContain("p@ss");

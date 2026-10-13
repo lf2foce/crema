@@ -5,18 +5,18 @@ import { existsSync } from "node:fs";
 import { compare } from "../core/compare";
 import { Registry } from "../core/registry";
 import { modelPayload, snapshot } from "../core/schema";
-import { Creama } from "../core/service";
+import { Crema } from "../core/service";
 import type { Candidate, CandidateSpec, SchemaSnapshot } from "../core/types";
 import { verify, windows } from "../core/verify";
 import { closePools, Warehouse } from "../core/warehouse";
 import { closeDatabases, database } from "../core/db";
 import pg from "pg";
 
-const ADMIN_PG = process.env.CREAMA_TEST_HOSTING_ADMIN_URL ?? "postgresql://localhost:5432/postgres";
+const ADMIN_PG = process.env.CREMA_TEST_HOSTING_ADMIN_URL ?? "postgresql://localhost:5432/postgres";
 
 if (existsSync(".env.local")) process.loadEnvFile(".env.local");
-const URL = process.env.CREAMA_DEMO_URL ?? ""; // pnpm demo:db writes it to .env.local
-const ADMIN = process.env.CREAMA_TEST_ADMIN_URL ?? "postgresql:///creama_demo?host=/tmp";
+const URL = process.env.CREMA_DEMO_URL || process.env.CREAMA_DEMO_URL || ""; // pnpm demo:db writes it to .env.local
+const ADMIN = process.env.CREMA_TEST_ADMIN_URL || process.env.CREAMA_TEST_ADMIN_URL || "postgresql:///crema_demo?host=/tmp";
 
 let wh: Warehouse;
 let snap: SchemaSnapshot;
@@ -33,8 +33,8 @@ beforeAll(async () => {
   }
 
 });
-// Creama's state goes to a throwaway schema per test, dropped at the end.
-const STATE_URL = process.env.CREAMA_TEST_STATE_URL ?? "postgresql://localhost:5432/creama_test";
+// Crema's state goes to a throwaway schema per test, dropped at the end.
+const STATE_URL = process.env.CREMA_TEST_STATE_URL || process.env.CREAMA_TEST_STATE_URL || "postgresql://localhost:5432/crema_test";
 const schemas: string[] = [];
 function freshRegistry() {
   const schema = `t_${process.pid}_${schemas.length}_${Math.random().toString(36).slice(2, 8)}`;
@@ -133,7 +133,7 @@ describe.runIf(() => available)("against the demo database", () => {
   });
 
   it("only certifies with a named human, re-verifies, versions immutably, and serves only certified metrics", async () => {
-    const base = new Creama(freshRegistry());
+    const base = new Crema(freshRegistry());
     const { source } = await base.addExternal(URL, "test", "Demo");
     const r = await base.withSource(source.id);
     const ref = `${source.slug}/mrr`;
@@ -185,7 +185,7 @@ describe.runIf(() => available)("against the demo database", () => {
   });
 
   it("lets a person create a metric by hand, with the same checks and audit trail", async () => {
-    const base = new Creama(freshRegistry());
+    const base = new Crema(freshRegistry());
     const { source } = await base.addExternal(URL, "test");
     const r = await base.withSource(source.id);
     const edits = { name: "Doanh thu thuần", question: "Doanh thu sau hoàn tiền?", kind: "flow" as const, unit: "currency" as const, sql: "SELECT coalesce(sum(total_cents), 0) / 100.0 AS value FROM public.invoices WHERE status = 'paid' AND paid_at >= {{start}} AND paid_at < {{end}}" };
@@ -204,7 +204,7 @@ describe.runIf(() => available)("against the demo database", () => {
   });
 
   it("keeps metrics on their own source and stops serving one whose tables changed", async () => {
-    const dbName = `creama_drift_${process.pid}`;
+    const dbName = `crema_drift_${process.pid}`;
     const raw = new pg.Client({ connectionString: ADMIN_PG }); await raw.connect();
     try {
       await raw.query(`DROP DATABASE IF EXISTS ${dbName}`);
@@ -213,7 +213,7 @@ describe.runIf(() => available)("against the demo database", () => {
       const setup = new pg.Client({ connectionString: u.toString() }); await setup.connect();
       await setup.query("CREATE TABLE orders (id serial PRIMARY KEY, total int); INSERT INTO orders (total) VALUES (5), (7)");
 
-      const base = new Creama(freshRegistry());
+      const base = new Crema(freshRegistry());
       const a = await base.addExternal(u.toString(), "test", "Shop");
       const b = await base.addExternal(URL, "test", "Shop"); // same name → its own slug
       expect(b.source.slug).not.toBe(a.source.slug);

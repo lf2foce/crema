@@ -18,7 +18,7 @@ import type { Candidate, CandidateSpec, Concept, Metric, MetricKind, MetricUnit,
 import { driftedRelations, fingerprint, pgError, verify, windows } from "./verify";
 import { assertSingleSelect, bind, describeUrl, seriesSql, SqlContractError, Warehouse } from "./warehouse";
 
-export class CreamaError extends Error {
+export class CremaError extends Error {
   constructor(message: string, readonly status = 400) { super(message); }
 }
 
@@ -33,39 +33,39 @@ export type Grain = "day" | "week" | "month" | "quarter" | "year";
 export type Scope = { workspaceId: string; source: Source | null };
 
 // introspection is cached per source for 30s: the schema map, table browser and drift checks share it
-const tablesCache: Map<number, { at: number; tables: Table[] }> = ((globalThis as any).__creamaTables ??= new Map());
+const tablesCache: Map<number, { at: number; tables: Table[] }> = ((globalThis as any).__cremaTables ??= new Map());
 
-export class Creama {
+export class Crema {
   constructor(readonly reg: Registry = registry(), readonly scope: Scope = { workspaceId: DEFAULT_WORKSPACE, source: null }) {}
 
   /** The same service, pointed at one of the workspace's sources. */
-  async withSource(idOrSlug: number | string): Promise<Creama> {
+  async withSource(idOrSlug: number | string): Promise<Crema> {
     const source = await this.reg.source(this.scope.workspaceId, idOrSlug);
-    if (!source) throw new CreamaError(`No database “${idOrSlug}” in this workspace.`, 404);
-    return new Creama(this.reg, { ...this.scope, source });
+    if (!source) throw new CremaError(`No database “${idOrSlug}” in this workspace.`, 404);
+    return new Crema(this.reg, { ...this.scope, source });
   }
 
   src(): Source {
-    if (!this.scope.source) throw new CreamaError("Choose a database first.", 409);
+    if (!this.scope.source) throw new CremaError("Choose a database first.", 409);
     return this.scope.source;
   }
   private ev(actor: string, action: string, subject: string, detail?: unknown, source: Source | null = this.scope.source) {
     return this.reg.event({ workspaceId: this.scope.workspaceId, sourceId: source?.id ?? null }, actor, action, subject, detail);
   }
 
-  /** The read-only connection Creama queries a source with. */
+  /** The read-only connection Crema queries a source with. */
   async warehouse(source: Source = this.src()): Promise<Warehouse> {
-    if (source.status !== "ready") throw new CreamaError(`${source.name} isn’t ready (${source.status}${source.error ? `: ${source.error}` : ""}).`, 409);
+    if (source.status !== "ready") throw new CremaError(`${source.name} isn’t ready (${source.status}${source.error ? `: ${source.error}` : ""}).`, 409);
     const sealed = (await this.reg.sourceSecrets(source.id)).connection;
     let url = "";
     try { url = sealed ? unseal(sealed) : ""; } catch { /* encryption key changed */ }
-    if (!url) throw new CreamaError(`Creama can’t read the connection for ${source.name} (the encryption key may have changed). Reconnect it.`, 409);
+    if (!url) throw new CremaError(`Crema can’t read the connection for ${source.name} (the encryption key may have changed). Reconnect it.`, 409);
     return new Warehouse(url);
   }
 
   // ---------- sources (workspace level) ----------
 
-  /** Every database in the workspace, with what Creama knows about each. */
+  /** Every database in the workspace, with what Crema knows about each. */
   async sources() {
     const list = await this.reg.sources(this.scope.workspaceId);
     // size and connections of hosted databases, asked of each server once; null when it can't be reached
@@ -88,9 +88,9 @@ export class Creama {
     }));
   }
 
-  /** Connect a database you already have. Creama reads it in READ ONLY transactions; a read-only role is still advised. */
+  /** Connect a database you already have. Crema reads it in READ ONLY transactions; a read-only role is still advised. */
   async addExternal(url: string, actor: string, name?: string) {
-    if (!/^postgres(ql)?:\/\//.test(url)) throw new CreamaError("Expected a postgres:// connection string.");
+    if (!/^postgres(ql)?:\/\//.test(url)) throw new CremaError("Expected a postgres:// connection string.");
     const wh = new Warehouse(url, 8_000);
     let info: { db: string; usr: string; ro: string; writable: number; tables: number };
     try {
@@ -101,7 +101,7 @@ export class Creama {
         FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
         WHERE c.relkind IN ('r','p') AND n.nspname NOT IN ('pg_catalog','information_schema') AND n.nspname NOT LIKE 'pg_toast%'`);
     } catch (e) {
-      throw new CreamaError(`Could not connect: ${pgError(e)}`);
+      throw new CremaError(`Could not connect: ${pgError(e)}`);
     }
     const label = (name ?? "").trim() || info.db;
     const source = await this.reg.addSource(this.scope.workspaceId, {
@@ -111,7 +111,7 @@ export class Creama {
     return { source, ...describeUrl(url), tables: info.tables, writableTables: info.writable, readOnlyRole: info.ro === "on" };
   }
 
-  // ---------- servers: Postgres servers Creama creates databases on ----------
+  // ---------- servers: Postgres servers Crema creates databases on ----------
 
   async servers() {
     const [servers, sources] = await Promise.all([this.reg.servers(this.scope.workspaceId), this.reg.sources(this.scope.workspaceId)]);
@@ -119,20 +119,20 @@ export class Creama {
   }
 
   /**
-   * Add a server from an admin login. A superuser login is used once, to create Creama's own
+   * Add a server from an admin login. A superuser login is used once, to create Crema's own
    * provisioner (CREATEDB CREATEROLE), and isn't stored; a login that already is such a role is kept.
    */
   async addServer(input: { url: string; name?: string | null; publicHost?: string | null; ssl?: boolean | null }, actor: string) {
     const url = input.url.trim();
-    if (!/^postgres(ql)?:\/\//.test(url)) throw new CreamaError("Expected a postgres:// connection string for an admin login.");
+    if (!/^postgres(ql)?:\/\//.test(url)) throw new CremaError("Expected a postgres:// connection string for an admin login.");
     let check: LoginCheck;
-    try { check = await Hosting.check(url); } catch (e) { throw new CreamaError(`Could not connect: ${pgError(e)}`); }
-    if (!check.superuser && Hosting.refusal(check)) throw new CreamaError(Hosting.refusal(check)!, 422);
-    if (check.superuser && check.versionNum < 160000) throw new CreamaError(Hosting.refusal(check)!, 422);
+    try { check = await Hosting.check(url); } catch (e) { throw new CremaError(`Could not connect: ${pgError(e)}`); }
+    if (!check.superuser && Hosting.refusal(check)) throw new CremaError(Hosting.refusal(check)!, 422);
+    if (check.superuser && check.versionNum < 160000) throw new CremaError(Hosting.refusal(check)!, 422);
     let address;
     try { address = Hosting.address(url, input.publicHost, input.ssl); } catch (e) { throw hostingError(e); }
     const name = (input.name ?? "").trim().slice(0, 60) || address.host;
-    if ((await this.reg.servers(this.scope.workspaceId)).some((v) => v.name === name)) throw new CreamaError(`A server named “${name}” already exists.`, 409);
+    if ((await this.reg.servers(this.scope.workspaceId)).some((v) => v.name === name)) throw new CremaError(`A server named “${name}” already exists.`, 409);
 
     let adminUrl = url, provisioner = check.user;
     if (check.superuser) {
@@ -157,43 +157,43 @@ export class Creama {
   /** The server this installation suggests (bundled with it, or this machine in development), in one click. */
   async addSuggestedServer(actor: string) {
     const offer = suggestedServer();
-    if (!offer) throw new CreamaError("Add a server with an admin login instead.", 404);
+    if (!offer) throw new CremaError("Add a server with an admin login instead.", 404);
     return this.addServer(offer, actor);
   }
 
-  /** Is the server reachable, and does Creama's login still have what it needs? */
+  /** Is the server reachable, and does Crema's login still have what it needs? */
   async checkServer(id: number) {
     const server = await this.reg.server(this.scope.workspaceId, id);
-    if (!server) throw new CreamaError("Server not found.", 404);
+    if (!server) throw new CremaError("Server not found.", 404);
     try {
       const h = await this.hostingFor(id);
       const c = await Hosting.check(h.adminUrl);
       return { ok: !Hosting.refusal(c), reason: Hosting.refusal(c), version: c.version };
     } catch (e) {
-      return { ok: false, reason: e instanceof CreamaError ? e.message : `Can’t reach it: ${pgError(e)}`, version: null };
+      return { ok: false, reason: e instanceof CremaError ? e.message : `Can’t reach it: ${pgError(e)}`, version: null };
     }
   }
 
-  /** Forget a server once no database is on it. Its provisioner role stays on the server (Creama can't drop itself). */
+  /** Forget a server once no database is on it. Its provisioner role stays on the server (Crema can't drop itself). */
   async removeServer(id: number, actor: string) {
     const server = await this.reg.server(this.scope.workspaceId, id);
-    if (!server) throw new CreamaError("Server not found.", 404);
+    if (!server) throw new CremaError("Server not found.", 404);
     const blocking = await this.reg.removeServer(server, actor);
-    if (blocking) throw new CreamaError(`${server.name} still has ${blocking} database${blocking > 1 ? "s" : ""}. Delete them first.`, 409);
+    if (blocking) throw new CremaError(`${server.name} still has ${blocking} database${blocking > 1 ? "s" : ""}. Delete them first.`, 409);
     return { provisioner: server.provisioner };
   }
 
   private async hostingFor(serverId: number | null): Promise<Hosting> {
     const server = serverId == null ? null : await this.reg.server(this.scope.workspaceId, serverId);
-    if (!server) throw new CreamaError("This database’s server is no longer in the workspace.", 409);
+    if (!server) throw new CremaError("This database’s server is no longer in the workspace.", 409);
     const sealed = await this.reg.serverSecret(server.id);
     let url = "";
     try { url = sealed ? unseal(sealed) : ""; } catch { /* encryption key changed */ }
-    if (!url) throw new CreamaError(`Creama can’t read its login for ${server.name} (the encryption key may have changed). Add the server again.`, 409);
+    if (!url) throw new CremaError(`Crema can’t read its login for ${server.name} (the encryption key may have changed). Add the server again.`, 409);
     return new Hosting(url, Hosting.address(url, server.publicHost, server.ssl));
   }
 
-  // ---------- hosted databases: Postgres Creama creates for apps elsewhere ----------
+  // ---------- hosted databases: Postgres Crema creates for apps elsewhere ----------
 
   /**
    * Creates a database for an app and adds it as a source. The source row comes first (status
@@ -204,12 +204,12 @@ export class Creama {
     // Neon-style: the first database goes on the installation's own server, added on the way
     if (!servers.length && suggestedServer()) { await this.addSuggestedServer(actor); servers = await this.reg.servers(this.scope.workspaceId); }
     const server = serverId ? servers.find((v) => v.id === serverId) : servers.length === 1 ? servers[0] : null;
-    if (!server) throw new CreamaError(servers.length ? "Choose the server to create it on." : "Add a Postgres server first: Creama creates databases on a server you give it.", servers.length ? 400 : 409);
+    if (!server) throw new CremaError(servers.length ? "Choose the server to create it on." : "Add a Postgres server first: Crema creates databases on a server you give it.", servers.length ? 400 : 409);
     const h = await this.hostingFor(server.id);
-    if (!name?.trim()) throw new CreamaError("Give the database a name.");
+    if (!name?.trim()) throw new CremaError("Give the database a name.");
     let dbName: string;
     try { dbName = Hosting.dbNameFor(name); } catch (e) { throw hostingError(e); }
-    if ((await this.reg.sources(this.scope.workspaceId)).some((s) => s.serverId === server.id && s.dbName === dbName)) throw new CreamaError(`A database named “${dbName}” already exists on ${server.name}.`, 409);
+    if ((await this.reg.sources(this.scope.workspaceId)).some((s) => s.serverId === server.id && s.dbName === dbName)) throw new CremaError(`A database named “${dbName}” already exists on ${server.name}.`, 409);
     const source = await this.reg.addSource(this.scope.workspaceId, {
       slug: await this.reg.freeSlug(this.scope.workspaceId, dbName.replace(/^app_/, "")), name: name.trim().slice(0, 80),
       kind: "hosted", status: "provisioning", dbName, readOnly: true, serverId: server.id,
@@ -224,8 +224,8 @@ export class Creama {
    */
   async retryHosted(id: number, actor: string) {
     const source = await this.reg.source(this.scope.workspaceId, id);
-    if (!source || source.kind !== "hosted") throw new CreamaError("Hosted database not found.", 404);
-    if (source.status === "ready") throw new CreamaError("This database is already ready.", 409);
+    if (!source || source.kind !== "hosted") throw new CremaError("Hosted database not found.", 404);
+    if (source.status === "ready") throw new CremaError("This database is already ready.", 409);
     const h = await this.hostingFor(source.serverId);
     await this.provision(h, source, actor);
     return (await this.reg.source(this.scope.workspaceId, id))!;
@@ -250,7 +250,7 @@ export class Creama {
       // Hosting.create never adopts what isn't this source's, and cleans up only what this attempt made.
       await this.reg.updateSource(source.id, { status: "failed", error: message });
       await this.ev(actor, "source.provisioning_failed", `source:${source.slug}`, { dbName, error: message }, source);
-      throw new CreamaError(`Could not create ${dbName}: ${message}`, 502);
+      throw new CremaError(`Could not create ${dbName}: ${message}`, 502);
     }
     await this.ev(actor, "source.provisioned", `source:${source.slug}`, { dbName }, source);
   }
@@ -258,30 +258,30 @@ export class Creama {
   /** Host, user, password… for one of a hosted database's logins. Admin only (enforced by the route). */
   async hostedConnection(id: number, role: "owner" | "reader") {
     const source = await this.reg.source(this.scope.workspaceId, id);
-    if (!source || source.kind !== "hosted" || !source.dbName) throw new CreamaError("Hosted database not found.", 404);
+    if (!source || source.kind !== "hosted" || !source.dbName) throw new CremaError("Hosted database not found.", 404);
     const h = await this.hostingFor(source.serverId);
     const secrets = await this.reg.sourceSecrets(id);
     const sealed = role === "owner" ? secrets.ownerPassword : secrets.readerPassword;
     let pw = "";
     try { pw = sealed ? unseal(sealed) : ""; } catch { /* key changed */ }
-    if (!pw) throw new CreamaError("This password can’t be shown (it was never stored, or the encryption key changed). Reset it to get a new one.", 409);
-    return h.connectionParts(source.dbName, `${source.dbName}_${role === "owner" ? "owner" : "creama"}`, pw);
+    if (!pw) throw new CremaError("This password can’t be shown (it was never stored, or the encryption key changed). Reset it to get a new one.", 409);
+    return h.connectionParts(source.dbName, `${source.dbName}_${role === "owner" ? "owner" : "crema"}`, pw);
   }
 
   async resetHostedPassword(id: number, actor: string, role: "owner" | "reader" = "owner") {
     const source = await this.reg.source(this.scope.workspaceId, id);
-    if (!source || source.kind !== "hosted" || !source.dbName) throw new CreamaError("Hosted database not found.", 404);
+    if (!source || source.kind !== "hosted" || !source.dbName) throw new CremaError("Hosted database not found.", 404);
     const h = await this.hostingFor(source.serverId);
-    const login = `${source.dbName}_${role === "owner" ? "owner" : "creama"}`;
+    const login = `${source.dbName}_${role === "owner" ? "owner" : "crema"}`;
     const { provisionToken } = await this.reg.sourceSecrets(id);
-    if (!provisionToken) throw new CreamaError("Creama can’t prove this database is its own, so it won’t change its logins.", 409);
+    if (!provisionToken) throw new CremaError("Crema can’t prove this database is its own, so it won’t change its logins.", 409);
     let pw: string;
-    try { pw = await h.resetPassword(source.dbName, role === "owner" ? "owner" : "creama", provisionToken); } catch (e) { throw hostingError(e); }
-    // the role already has the new password: record it, and Creama's own connection when it's the reader
+    try { pw = await h.resetPassword(source.dbName, role === "owner" ? "owner" : "crema", provisionToken); } catch (e) { throw hostingError(e); }
+    // the role already has the new password: record it, and Crema's own connection when it's the reader
     try {
       await this.reg.updateSource(id, role === "owner" ? { ownerPassword: seal(pw) } : { readerPassword: seal(pw), connection: seal(h.internalUrl(source.dbName, login, pw)) });
     } catch (e) {
-      throw new CreamaError(`The password was changed but couldn’t be saved (${(e as Error).message}). Reset it again.`, 500);
+      throw new CremaError(`The password was changed but couldn’t be saved (${(e as Error).message}). Reset it again.`, 500);
     }
     await this.ev(actor, "source.password_reset", `source:${source.slug}`, { role }, source);
     return this.hostedConnection(id, role);
@@ -294,7 +294,7 @@ export class Creama {
    */
   async removeSource(id: number, actor: string) {
     const source = await this.reg.source(this.scope.workspaceId, id);
-    if (!source) throw new CreamaError("Database not found.", 404);
+    if (!source) throw new CremaError("Database not found.", 404);
     if (source.kind === "hosted" && source.dbName) {
       const { provisionToken } = await this.reg.sourceSecrets(id);
       if (provisionToken) {
@@ -334,7 +334,7 @@ export class Creama {
     const running = await this.reg.latestRun(source.id);
     if (running?.status === "running") return running.id;
     try { modelSettings(); } catch (error) {
-      throw new CreamaError((error as Error).message, 409);
+      throw new CremaError((error as Error).message, 409);
     }
     await this.warehouse();
     const { enqueueDiscovery } = await import("./jobs");
@@ -429,30 +429,30 @@ export class Creama {
     await this.reg.db.ready;
     await reconcileRun(this.reg, this.src().id, id);
     const r = await this.reg.run(this.src().id, id);
-    if (!r) throw new CreamaError("Run not found.", 404);
+    if (!r) throw new CremaError("Run not found.", 404);
     return r;
   }
 
   // ---------- SQL editor and table browser (read-only, for people) ----------
 
   async sql(sql: string, limit?: number) {
-    if (!sql?.trim()) throw new CreamaError("Write a query first.");
+    if (!sql?.trim()) throw new CremaError("Write a query first.");
     try { return await runSql(await this.warehouse(), sql, limit); }
-    catch (e) { throw e instanceof CreamaError ? e : e instanceof ExploreError ? new CreamaError(e.message) : new CreamaError(pgError(e), 422); }
+    catch (e) { throw e instanceof CremaError ? e : e instanceof ExploreError ? new CremaError(e.message) : new CremaError(pgError(e), 422); }
   }
 
   async tableRows(qualified: string, opts: { limit?: number; offset?: number; order?: string | null; dir?: string | null }) {
     const t = (await this.tables()).find((x) => x.qualified === qualified || x.name === qualified);
-    if (!t) throw new CreamaError(`No table “${qualified}”.`, 404);
+    if (!t) throw new CremaError(`No table “${qualified}”.`, 404);
     try { return await tableRows(await this.warehouse(), t, opts); }
-    catch (e) { throw e instanceof CreamaError ? e : e instanceof ExploreError ? new CreamaError(e.message) : new CreamaError(pgError(e), 422); }
+    catch (e) { throw e instanceof CremaError ? e : e instanceof ExploreError ? new CremaError(e.message) : new CremaError(pgError(e), 422); }
   }
 
   async queries() { return this.reg.queries(this.src().id); }
 
   async saveQuery(input: { id?: number | null; name?: string; sql?: string }, actor: string) {
     const name = (input.name ?? "").trim() || "Untitled query";
-    if (!input.sql?.trim()) throw new CreamaError("Nothing to save: the query is empty.");
+    if (!input.sql?.trim()) throw new CremaError("Nothing to save: the query is empty.");
     return this.reg.saveQuery(this.src(), { id: input.id ?? null, name: name.slice(0, 120), sql: input.sql }, actor);
   }
 
@@ -507,14 +507,14 @@ export class Creama {
     const source = this.src();
     const actor = requireActor(input.actor);
     const concept = await this.reg.concept(source.id, input.conceptId);
-    if (!concept) throw new CreamaError("Proposal not found.", 404);
-    if (concept.status !== "open") throw new CreamaError(`This proposal is already ${concept.status}.`, 409);
+    if (!concept) throw new CremaError("Proposal not found.", 404);
+    if (concept.status !== "open") throw new CremaError(`This proposal is already ${concept.status}.`, 409);
     const cand = concept.candidates.find((c) => c.id === input.candidateId);
-    if (!cand) throw new CreamaError("Definition not found in this proposal.", 404);
+    if (!cand) throw new CremaError("Definition not found in this proposal.", 404);
 
     const e = input.edits ?? {};
     const key = slug(e.key ?? concept.key);
-    if (await this.reg.metric(source.id, key)) throw new CreamaError(`A metric with key “${key}” is already certified in ${source.name}. Choose another key or revise that metric.`, 409);
+    if (await this.reg.metric(source.id, key)) throw new CremaError(`A metric with key “${key}” is already certified in ${source.name}. Choose another key or revise that metric.`, 409);
 
     const def = mergeDef(cand, e);
     const edited = def.sql !== cand.sql || def.membersSql !== cand.membersSql || def.kind !== cand.kind || def.unit !== cand.unit;
@@ -540,10 +540,10 @@ export class Creama {
     const actor = requireActor(input.actor);
     const e = input.edits;
     const name = (e.name ?? "").trim();
-    if (!name) throw new CreamaError("A metric needs a name.");
-    if (!e.sql?.trim()) throw new CreamaError("A metric needs a SQL definition.");
+    if (!name) throw new CremaError("A metric needs a name.");
+    if (!e.sql?.trim()) throw new CremaError("A metric needs a SQL definition.");
     const key = slug(e.key || name);
-    if (await this.reg.metric(source.id, key)) throw new CreamaError(`A metric with key “${key}” already exists in ${source.name}. Choose another key or revise that metric.`, 409);
+    if (await this.reg.metric(source.id, key)) throw new CremaError(`A metric with key “${key}” already exists in ${source.name}. Choose another key or revise that metric.`, 409);
     const def = mergeDef({ kind: "snapshot", unit: "number", sql: "", membersSql: null, memberTable: null }, e);
     const version = await this.saveVersion({
       metricKey: key, name,
@@ -559,7 +559,7 @@ export class Creama {
   async revise(input: { key: string; edits: Edits; actor: string; note?: string | null }): Promise<MetricVersion> {
     const actor = requireActor(input.actor);
     const m = await this.reg.metric(this.src().id, input.key);
-    if (!m) throw new CreamaError("Metric not found.", 404);
+    if (!m) throw new CremaError("Metric not found.", 404);
     const cur = m.current;
     const def = mergeDef(cur, input.edits);
     return this.saveVersion({
@@ -574,27 +574,27 @@ export class Creama {
   }
 
   private async saveVersion(v: Omit<MetricVersion, "version" | "certifiedAt" | "fingerprint" | "verification">, owner: string, after?: Parameters<Registry["certify"]>[3]) {
-    if (!v.name) throw new CreamaError("A metric needs a name.");
+    if (!v.name) throw new CremaError("A metric needs a name.");
     // Store the SQL exactly as consumers will run it: the series wrapper embeds it as a subquery,
     // so a trailing ";" that passed verification would break every later read.
     try {
       v = { ...v, sql: assertSingleSelect(v.sql), membersSql: v.membersSql ? assertSingleSelect(v.membersSql) : v.membersSql };
     } catch (e) {
-      if (e instanceof SqlContractError) throw new CreamaError(`Not certified: ${e.message}`, 422);
+      if (e instanceof SqlContractError) throw new CremaError(`Not certified: ${e.message}`, 422);
       throw e;
     }
     const schema = await this.liveSchema();
     const verification = await verify(await this.warehouse(), v, schema);
-    if (!verification.ok) throw new CreamaError(`Not certified: the definition fails on your database right now. ${verification.error ?? ""}`.trim(), 422);
+    if (!verification.ok) throw new CremaError(`Not certified: the definition fails on your database right now. ${verification.error ?? ""}`.trim(), 422);
     const failing = verification.checks.filter((c) => c.level === "fail");
-    if (failing.length) throw new CreamaError(`Not certified: ${failing.map((c) => c.message).join(" ")}`, 422);
+    if (failing.length) throw new CremaError(`Not certified: ${failing.map((c) => c.message).join(" ")}`, 422);
     return this.reg.certify(this.src(), { ...v, fingerprint: fingerprint(verification.relations, schema.tables), verification }, owner, after);
   }
 
   async reject(conceptId: number, actor: string, reason?: string | null) {
     const who = requireActor(actor);
     const c = await this.reg.concept(this.src().id, conceptId);
-    if (!c) throw new CreamaError("Proposal not found.", 404);
+    if (!c) throw new CremaError("Proposal not found.", 404);
     await this.reg.setConceptStatus(conceptId, "rejected");
     await this.ev(who, "proposal.rejected", `proposal:${conceptId}`, { key: c.key, reason: reason ?? null });
   }
@@ -602,7 +602,7 @@ export class Creama {
   async reopen(conceptId: number, actor: string) {
     const who = requireActor(actor);
     const c = await this.reg.concept(this.src().id, conceptId);
-    if (!c || c.status !== "rejected") throw new CreamaError("Only rejected proposals can be reopened.", 409);
+    if (!c || c.status !== "rejected") throw new CremaError("Only rejected proposals can be reopened.", 409);
     await this.reg.setConceptStatus(conceptId, "open");
     await this.ev(who, "proposal.reopened", `proposal:${conceptId}`, { key: c.key });
   }
@@ -610,7 +610,7 @@ export class Creama {
   async deprecate(key: string, actor: string, reason?: string | null) {
     const who = requireActor(actor);
     const m = await this.reg.metric(this.src().id, key);
-    if (!m) throw new CreamaError("Metric not found.", 404);
+    if (!m) throw new CremaError("Metric not found.", 404);
     await this.reg.setMetricStatus(m.id, "deprecated");
     await this.ev(who, "metric.deprecated", `metric:${this.src().slug}/${key}`, { reason: reason ?? null });
   }
@@ -656,12 +656,12 @@ export class Creama {
   }
 
   /** "source/key" → the metric, scoped to this workspace. */
-  async resolve(ref: string): Promise<{ svc: Creama; metric: Metric }> {
+  async resolve(ref: string): Promise<{ svc: Crema; metric: Metric }> {
     const [sourceSlug, key, extra] = ref.split("/");
-    if (!sourceSlug || !key || extra) throw new CreamaError(`A metric is addressed as “database/metric”, e.g. “demo/mrr” (got “${ref}”).`);
-    const svc = await this.withSource(sourceSlug).catch(() => { throw new CreamaError(`No certified metric “${ref}”.`, 404); });
+    if (!sourceSlug || !key || extra) throw new CremaError(`A metric is addressed as “database/metric”, e.g. “demo/mrr” (got “${ref}”).`);
+    const svc = await this.withSource(sourceSlug).catch(() => { throw new CremaError(`No certified metric “${ref}”.`, 404); });
     const metric = await this.reg.metric(svc.src().id, key);
-    if (!metric || metric.status === "deprecated") throw new CreamaError(`No certified metric “${ref}”. Only certified metrics can be read.`, 404);
+    if (!metric || metric.status === "deprecated") throw new CremaError(`No certified metric “${ref}”. Only certified metrics can be read.`, 404);
     return { svc, metric };
   }
 
@@ -683,20 +683,20 @@ export class Creama {
     const { svc, metric: m } = await this.resolve(ref);
     const source = svc.src();
     const v = opts.version ? await this.reg.version(m.id, opts.version) : m.current;
-    if (!v) throw new CreamaError(`Version ${opts.version} of “${ref}” does not exist.`, 404);
+    if (!v) throw new CremaError(`Version ${opts.version} of “${ref}” does not exist.`, 404);
 
     const tables = await svc.tables(true, source);
     const drift = driftedRelations(v.fingerprint, tables);
     if (drift.length) {
       const why = `Schema changed since certification in: ${drift.join(", ")}.`;
       if (v.version === m.current.version && (m.status !== "needs_attention" || m.attention !== why)) await this.reg.setMetricStatus(m.id, "needs_attention", why);
-      throw new CreamaError(`“${ref}” needs attention: ${why} It isn’t served until someone re-certifies it.`, 409);
+      throw new CremaError(`“${ref}” needs attention: ${why} It isn’t served until someone re-certifies it.`, 409);
     }
     if (m.status === "needs_attention" && !driftedRelations(m.current.fingerprint, tables).length) await this.reg.setMetricStatus(m.id, "certified"); // the schema came back
 
     const to = opts.to ? parseDate(opts.to, "to") : new Date();
     const from = opts.from ? parseDate(opts.from, "from") : new Date(Date.UTC(to.getUTCFullYear() - 1, to.getUTCMonth(), 1));
-    if (from >= to) throw new CreamaError("`from` must be before `to`.");
+    if (from >= to) throw new CremaError("`from` must be before `to`.");
     const wh = await svc.warehouse();
     const meta = {
       metric: ref, source: source.slug, key: m.key, name: v.name, version: v.version, latestVersion: m.currentVersion, unit: v.unit, kind: v.kind,
@@ -710,7 +710,7 @@ export class Creama {
       }
       const start = truncate(from, opts.grain);
       const buckets = estimateBuckets(start, to, opts.grain);
-      if (buckets > 500) throw new CreamaError(`That would be ${buckets} ${opts.grain}s; narrow the range or use a coarser grain.`);
+      if (buckets > 500) throw new CremaError(`That would be ${buckets} ${opts.grain}s; narrow the range or use a coarser grain.`);
       const rows = await wh.query<{ bucket_start: Date; value: unknown }>(seriesSql(v.sql), [start.toISOString(), to.toISOString(), INTERVAL[opts.grain], to.toISOString()], 20_000);
       return {
         ...meta, from: start.toISOString(), to: to.toISOString(), grain: opts.grain,
@@ -721,8 +721,8 @@ export class Creama {
         }),
       };
     } catch (e) {
-      if (e instanceof CreamaError) throw e;
-      throw new CreamaError(`The certified definition failed: ${pgError(e)}`, 502);
+      if (e instanceof CremaError) throw e;
+      throw new CremaError(`The certified definition failed: ${pgError(e)}`, 502);
     }
   }
 
@@ -752,12 +752,12 @@ function mergeDef(base: Pick<CandidateSpec, "kind" | "unit" | "sql" | "membersSq
 
 /**
  * A server to offer in one click: the hosting server bundled with this installation
- * (CREAMA_BUNDLED_SERVER_URL, a provisioner login, e.g. compose's `hosting`), else in development the
+ * (CREMA_BUNDLED_SERVER_URL, a provisioner login, e.g. compose's `hosting`), else in development the
  * Postgres server in DATABASE_URL. Production never offers the state server.
  */
 function suggestedServer(): { url: string; name: string; publicHost: string | null; ssl: boolean | null } | null {
-  const bundled = process.env.CREAMA_BUNDLED_SERVER_URL;
-  if (bundled) return { url: bundled, name: "Bundled server", publicHost: process.env.CREAMA_BUNDLED_SERVER_PUBLIC_HOST || null, ssl: true };
+  const bundled = process.env.CREMA_BUNDLED_SERVER_URL || process.env.CREAMA_BUNDLED_SERVER_URL;
+  if (bundled) return { url: bundled, name: "Bundled server", publicHost: process.env.CREMA_BUNDLED_SERVER_PUBLIC_HOST || process.env.CREAMA_BUNDLED_SERVER_PUBLIC_HOST || null, ssl: true };
   if (process.env.NODE_ENV === "production" || !process.env.DATABASE_URL) return null;
   const u = new URL(process.env.DATABASE_URL);
   u.pathname = "/postgres";
@@ -765,14 +765,14 @@ function suggestedServer(): { url: string; name: string; publicHost: string | nu
 }
 
 function hostingError(e: unknown): Error {
-  if (e instanceof CreamaError) return e;
-  if (e instanceof HostingError) return new CreamaError(e.message);
-  return new CreamaError(`Hosting: ${pgError(e)}`, 502);
+  if (e instanceof CremaError) return e;
+  if (e instanceof HostingError) return new CremaError(e.message);
+  return new CremaError(`Hosting: ${pgError(e)}`, 502);
 }
 
 function requireActor(actor: string | undefined | null): string {
   const a = (actor ?? "").trim();
-  if (!a || a === "anonymous") throw new CreamaError("Certifying needs a name: who is vouching for this definition?", 401);
+  if (!a || a === "anonymous") throw new CremaError("Certifying needs a name: who is vouching for this definition?", 401);
   return a.slice(0, 80);
 }
 
@@ -782,13 +782,13 @@ function slugify(s: string) {
 
 function slug(s: string) {
   const k = s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/đ/g, "d").replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "");
-  if (!k) throw new CreamaError("A metric needs a key.");
+  if (!k) throw new CremaError("A metric needs a key.");
   return k;
 }
 
 function parseDate(s: string, name: string): Date {
   const d = new Date(/^\d{4}-\d{2}-\d{2}$/.test(s) ? `${s}T00:00:00Z` : s);
-  if (Number.isNaN(d.getTime())) throw new CreamaError(`Invalid \`${name}\` date: ${s}`);
+  if (Number.isNaN(d.getTime())) throw new CremaError(`Invalid \`${name}\` date: ${s}`);
   return d;
 }
 
@@ -828,14 +828,14 @@ function num(v: unknown): number | null {
  * A service for one request's workspace (and source, when the request names one). Cheap: the
  * registry, pools and caches are shared. Stale discovery runs are closed once per process.
  */
-export function creama(scope?: Partial<Scope>): Creama {
+export function crema(scope?: Partial<Scope>): Crema {
   const g = globalThis as any;
-  const id = implId(Creama);
-  if (g.__creamaBooted !== id) {
-    g.__creamaBooted = id;
+  const id = implId(Crema);
+  if (g.__cremaBooted !== id) {
+    g.__cremaBooted = id;
     void registry().failStaleRuns("Interrupted: the server restarted during discovery.").catch(() => {});
   }
-  return new Creama(registry(), { workspaceId: scope?.workspaceId ?? DEFAULT_WORKSPACE, source: scope?.source ?? null });
+  return new Crema(registry(), { workspaceId: scope?.workspaceId ?? DEFAULT_WORKSPACE, source: scope?.source ?? null });
 }
 
 export type { Candidate, Concept };

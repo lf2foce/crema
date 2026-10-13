@@ -5,7 +5,7 @@ import { authClient } from "@/lib/authClient";
 
 type U = { id: string; name: string; email: string; role?: string | null; createdAt: string | Date; banned?: boolean | null };
 
-/** Admin only: who can sign in. Creama is invite-only after the first account. */
+/** Admin only: who can sign in. Crema is invite-only after the first account. */
 export function People({ me, notify }: { me: Me; notify: (t: string, e?: boolean) => void }) {
   const [users, setUsers] = useState<U[] | null>(null);
   const [name, setName] = useState("");
@@ -48,7 +48,7 @@ export function People({ me, notify }: { me: Me; notify: (t: string, e?: boolean
   return (
     <div className="page narrow">
       <h1 className="title">People</h1>
-      <p className="meaning">Creama is invite-only. Everyone here can review and certify metrics; admins also choose the database and invite people.</p>
+      <p className="meaning">Crema is invite-only. Everyone here can review and certify metrics; admins also choose the database and invite people.</p>
 
       <form className="card pad stack" onSubmit={invite}>
         <div className="section-title m-0">Invite someone</div>

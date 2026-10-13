@@ -1,24 +1,24 @@
 name: crema
 
 x-app: &app
-  image: creama:${CREAMA_IMAGE_TAG:-local}
+  image: crema:${CREMA_IMAGE_TAG:-local}
   build: .
   init: true
-  cpus: ${CREAMA_APP_CPUS:-0.75}
-  mem_limit: ${CREAMA_APP_MEMORY:-512m}
+  cpus: ${CREMA_APP_CPUS:-0.75}
+  mem_limit: ${CREMA_APP_MEMORY:-512m}
   security_opt:
     - no-new-privileges:true
   environment: &environment
     NODE_ENV: production
-    DATABASE_URL: postgresql://creama:${POSTGRES_PASSWORD:?Set a URL-safe POSTGRES_PASSWORD}@postgres:5432/creama
+    DATABASE_URL: postgresql://crema:${POSTGRES_PASSWORD:?Set a URL-safe POSTGRES_PASSWORD}@postgres:5432/crema
     APP_URL: ${APP_URL:-http://localhost:3300}
     BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?Set BETTER_AUTH_SECRET}
-    CREAMA_SETUP_TOKEN: ${CREAMA_SETUP_TOKEN:-}
-    CREAMA_ENCRYPTION_KEY: ${CREAMA_ENCRYPTION_KEY:-}
-    CREAMA_API_TOKEN: ${CREAMA_API_TOKEN:-}
-    CREAMA_PROVIDER: ${CREAMA_PROVIDER:-google}
-    CREAMA_MODEL: ${CREAMA_MODEL:-gemini-3.8-flash}
-    CREAMA_THINKING: ${CREAMA_THINKING:-low}
+    CREMA_SETUP_TOKEN: ${CREMA_SETUP_TOKEN:-}
+    CREMA_ENCRYPTION_KEY: ${CREMA_ENCRYPTION_KEY:-}
+    CREMA_API_TOKEN: ${CREMA_API_TOKEN:-}
+    CREMA_PROVIDER: ${CREMA_PROVIDER:-google}
+    CREMA_MODEL: ${CREMA_MODEL:-gemini-3.8-flash}
+    CREMA_THINKING: ${CREMA_THINKING:-low}
     GEMINI_API_KEY: ${GEMINI_API_KEY:-}
     GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
     OPENAI_API_KEY: ${OPENAI_API_KEY:-}
@@ -26,11 +26,11 @@ x-app: &app
     ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
     GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
     GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
-    CREAMA_DRIFT_CRON: ${CREAMA_DRIFT_CRON:-0 * * * *}
-    CREAMA_CURRENCY: ${CREAMA_CURRENCY:-VND}
-    # the bundled hosting server, offered in Databases → Servers: Creama's limited login only
-    CREAMA_BUNDLED_SERVER_URL: postgresql://creama_provisioner:${HOSTING_PROVISIONER_PASSWORD:?Set a URL-safe HOSTING_PROVISIONER_PASSWORD}@hosting:5432/postgres?sslmode=no-verify
-    CREAMA_BUNDLED_SERVER_PUBLIC_HOST: ${CREAMA_HOSTING_PUBLIC_HOST:-localhost:5433}
+    CREMA_DRIFT_CRON: ${CREMA_DRIFT_CRON:-0 * * * *}
+    CREMA_CURRENCY: ${CREMA_CURRENCY:-VND}
+    # the bundled hosting server, offered in Databases → Servers: Crema's limited login only
+    CREMA_BUNDLED_SERVER_URL: postgresql://crema_provisioner:${HOSTING_PROVISIONER_PASSWORD:?Set a URL-safe HOSTING_PROVISIONER_PASSWORD}@hosting:5432/postgres?sslmode=no-verify
+    CREMA_BUNDLED_SERVER_PUBLIC_HOST: ${CREMA_HOSTING_PUBLIC_HOST:-localhost:5433}
   logging:
     driver: json-file
     options:
@@ -40,42 +40,42 @@ x-app: &app
 services:
   postgres:
     image: postgres:18-bookworm
-    cpus: ${CREAMA_DB_CPUS:-0.5}
-    mem_limit: ${CREAMA_DB_MEMORY:-512m}
+    cpus: ${CREMA_DB_CPUS:-0.5}
+    mem_limit: ${CREMA_DB_MEMORY:-512m}
     shm_size: 128m
     restart: unless-stopped
     environment:
-      POSTGRES_USER: creama
-      POSTGRES_DB: creama
+      POSTGRES_USER: crema
+      POSTGRES_DB: crema
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
     volumes:
       # PostgreSQL 18 uses PGDATA=/var/lib/postgresql/18/docker.
       - postgres-data:/var/lib/postgresql
     # Deliberately no ports: only reachable on the Compose network.
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U creama -d creama"]
+      test: ["CMD-SHELL", "pg_isready -U crema -d crema"]
       interval: 5s
       timeout: 5s
       retries: 20
 
-  # Postgres for the apps' databases Creama creates (hosted databases). A separate server from
-  # `postgres` (Creama's own state): own volume, own superuser, reachable from the internet over TLS.
+  # Postgres for the apps' databases Crema creates (hosted databases). A separate server from
+  # `postgres` (Crema's own state): own volume, own superuser, reachable from the internet over TLS.
   hosting:
     image: postgres:18-bookworm
-    cpus: ${CREAMA_HOSTING_CPUS:-1}
-    mem_limit: ${CREAMA_HOSTING_MEMORY:-1g}
+    cpus: ${CREMA_HOSTING_CPUS:-1}
+    mem_limit: ${CREMA_HOSTING_MEMORY:-1g}
     shm_size: 256m
     restart: unless-stopped
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: ${HOSTING_SUPERUSER_PASSWORD:?Set HOSTING_SUPERUSER_PASSWORD}
-      CREAMA_PROVISIONER_PASSWORD: ${HOSTING_PROVISIONER_PASSWORD:?Set HOSTING_PROVISIONER_PASSWORD}
+      CREMA_PROVISIONER_PASSWORD: ${HOSTING_PROVISIONER_PASSWORD:?Set HOSTING_PROVISIONER_PASSWORD}
     volumes:
       - hosting-data:/var/lib/postgresql
-      - ./deploy/hosting/init.sh:/docker-entrypoint-initdb.d/10-creama.sh:ro
-    # Apps connect here. Set CREAMA_HOSTING_BIND=127.0.0.1 to keep it local.
+      - ./deploy/hosting/init.sh:/docker-entrypoint-initdb.d/10-crema.sh:ro
+    # Apps connect here. Set CREMA_HOSTING_BIND=127.0.0.1 to keep it local.
     ports:
-      - "${CREAMA_HOSTING_BIND:-0.0.0.0}:${CREAMA_HOSTING_PORT:-5433}:5432"
+      - "${CREMA_HOSTING_BIND:-0.0.0.0}:${CREMA_HOSTING_PORT:-5433}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
       interval: 5s
@@ -96,7 +96,7 @@ services:
     # explicit, so a platform that adds its proxy network (Dokploy, for a domain) keeps this one too
     networks: [default]
     ports:
-      - "127.0.0.1:${CREAMA_HTTP_PORT:-3300}:3300"
+      - "127.0.0.1:${CREMA_HTTP_PORT:-3300}:3300"
     depends_on:
       migrate:
         condition: service_completed_successfully

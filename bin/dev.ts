@@ -61,15 +61,15 @@ export function runGroup(commands: Command[], options: {
 export async function dev() {
   const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
   loadLocalEnv(root, "development");
-  const port = process.env.CREAMA_DEV_PORT || "3300";
-  if (!/^\d+$/.test(port) || Number(port) < 1 || Number(port) > 65535) throw new Error("CREAMA_DEV_PORT must be 1–65535.");
+  const port = process.env.CREMA_DEV_PORT || "3300";
+  if (!/^\d+$/.test(port) || Number(port) < 1 || Number(port) > 65535) throw new Error("CREMA_DEV_PORT must be 1–65535.");
   const require = createRequire(import.meta.url);
   const env = { ...process.env, NODE_ENV: "development" as const };
   const migration = await runGroup([{ name: "migration", command: process.execPath,
     args: ["--import", "tsx", "bin/migrate.ts"] }], { cwd: root, env, oneShot: true });
   if (migration !== 0) return migration;
   // A signal during migration should cancel startup, even if migration exits cleanly.
-  console.log(`Creama dev: web http://localhost:${port} + discovery/drift worker. Ctrl+C stops both.`);
+  console.log(`Crema dev: web http://localhost:${port} + discovery/drift worker. Ctrl+C stops both.`);
   return runGroup([
     { name: "web", command: process.execPath, args: [require.resolve("next/dist/bin/next"), "dev", "--hostname", "127.0.0.1", "--port", port] },
     { name: "worker", command: process.execPath, args: ["--import", "tsx", "bin/worker.ts"] },

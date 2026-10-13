@@ -1,4 +1,4 @@
-import { CreamaError, type Grain } from "@/core/service";
+import { CremaError, type Grain } from "@/core/service";
 import { handle } from "@/lib/http";
 
 const GRAINS = ["day", "week", "month", "quarter", "year"];
@@ -6,9 +6,9 @@ const GRAINS = ["day", "week", "month", "quarter", "year"];
 export const GET = handle(async ({ r, body, url }) => {
   const q = url.searchParams;
   const grain = q.get("grain");
-  if (grain && !GRAINS.includes(grain)) throw new CreamaError(`grain must be one of ${GRAINS.join(", ")}`);
+  if (grain && !GRAINS.includes(grain)) throw new CremaError(`grain must be one of ${GRAINS.join(", ")}`);
   const format = q.get("format") ?? "json";
-  if (format !== "json" && format !== "csv") throw new CreamaError("format must be json or csv");
+  if (format !== "json" && format !== "csv") throw new CremaError("format must be json or csv");
   const version = q.get("version");
   const out = await r.query(`${body.source}/${body.key}`, {
     from: q.get("from") ?? undefined,

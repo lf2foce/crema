@@ -1,5 +1,5 @@
 #!/usr/bin/env -S npx tsx
-// Applies pending migrations to DATABASE_URL (Creama's state, Better Auth's tables included).
+// Applies pending migrations to DATABASE_URL (Crema's state, Better Auth's tables included).
 // Run on every deploy before starting the app; `pnpm dev` runs it too.
 import { loadLocalEnv } from "./env";
 import { dirname, resolve } from "node:path";

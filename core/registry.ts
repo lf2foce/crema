@@ -122,7 +122,7 @@ export class Registry {
     });
   }
 
-  // ---------- servers (Postgres servers Creama creates databases on) ----------
+  // ---------- servers (Postgres servers Crema creates databases on) ----------
   private toServer(r: any): Server {
     return { id: r.id, workspaceId: r.workspace_id, name: r.name, provisioner: r.provisioner, publicHost: r.public_host, ssl: r.ssl, version: r.version, createdBy: r.created_by, createdAt: iso(r.created_at) };
   }
@@ -345,11 +345,11 @@ export function implId(cls: Function): string {
 
 // One registry per process, shared by every route bundle; rebuilt only when its code changed.
 // The pool lives in db.ts (keyed by URL), so a rebuilt registry reuses the same connections.
-let shared: Registry | null = (globalThis as any).__creamaRegistry ?? null;
+let shared: Registry | null = (globalThis as any).__cremaRegistry ?? null;
 export function registry(): Registry {
   const id = implId(Registry);
   if (!shared || (shared as any).__impl !== id) {
-    shared = (globalThis as any).__creamaRegistry = Object.assign(new Registry(), { __impl: id });
+    shared = (globalThis as any).__cremaRegistry = Object.assign(new Registry(), { __impl: id });
   }
   return shared;
 }

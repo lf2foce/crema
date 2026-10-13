@@ -1,12 +1,12 @@
 {
-  "name": "creama",
+  "name": "crema",
   "version": "0.1.0",
   "private": true,
   "description": "Connect Postgres. AI proposes your business metrics with evidence. Humans certify what's true. Software and AI reuse it.",
   "license": "MIT",
   "type": "module",
   "bin": {
-    "creama": "./bin/creama.ts"
+    "crema": "./bin/crema.ts"
   },
   "scripts": {
     "dev": "tsx bin/dev.ts",
@@ -14,8 +14,8 @@
     "build": "next build",
     "start": "next start --port 3300",
     "demo:db": "bash demo/setup.sh",
-    "creama": "tsx bin/creama.ts",
-    "mcp": "tsx bin/creama.ts mcp",
+    "crema": "tsx bin/crema.ts",
+    "mcp": "tsx bin/crema.ts mcp",
     "worker": "tsx bin/worker.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
