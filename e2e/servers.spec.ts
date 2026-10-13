@@ -30,6 +30,11 @@ test.afterAll(() => {
 
 test("add a server → create a database → connect → delete → remove the server", async ({ page }) => {
   const errors: string[] = [];
+  // the Servers section is collapsed while there's just the one server
+  const openServers = async () => {
+    const d = page.locator("details.side-servers");
+    if (!(await d.evaluate((e: HTMLDetailsElement) => e.open))) await d.locator("summary").click();
+  };
   page.on("pageerror", (e) => errors.push(e.message));
 
   // signed in as the admin (first account on a fresh instance, or the one an earlier spec created)
@@ -86,6 +91,7 @@ test("add a server → create a database → connect → delete → remove the s
   await expect(page.getByText("E2E Shop is ready, with a development branch.")).toBeVisible();
   await expect(page.getByRole("heading", { name: "E2E Shop" })).toBeVisible();
   const tabs = page.getByRole("navigation", { name: "Branches" });
+  await expect(page).toHaveURL(new RegExp(`#databases/${DB}$`)); // a database is addressed by its name, not a number
   await expect(tabs.getByRole("link", { name: /^production/ })).toContainText("PROD");
   await expect(tabs.getByRole("link", { name: /^development/ })).toContainText("DEV");
   // the sidebar groups by project, branches under it
@@ -149,6 +155,7 @@ test("add a server → create a database → connect → delete → remove the s
   expect(Math.abs(gap)).toBeLessThanOrEqual(1);
 
   // a server with databases can't be removed
+  await openServers();
   await page.getByRole("button", { name: /^db\.example\.com/ }).click();
   await expect(page.getByRole("button", { name: "Remove" })).toBeDisabled();
 
@@ -160,6 +167,7 @@ test("add a server → create a database → connect → delete → remove the s
   await expect(page.getByText(`Deleted ${DB}.`)).toBeVisible();
   expect(psql(`SELECT count(*) FROM pg_database WHERE datname = '${DB}'`)).toBe("0");
 
+  await openServers();
   await page.getByRole("button", { name: /^db\.example\.com/ }).click();
   await page.getByRole("button", { name: "Remove" }).click();
   await page.getByRole("dialog").getByRole("button", { name: "Remove server" }).click();

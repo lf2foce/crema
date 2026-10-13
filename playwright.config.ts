@@ -4,6 +4,7 @@ import { defineConfig } from "@playwright/test";
 // connect → discover → review → certify → reuse. Uses its own state database, recreated per run.
 export default defineConfig({
   testDir: "e2e",
+  workers: 1, // the specs share one server, one database and one first admin: they run in turn
   timeout: 240_000,
   expect: { timeout: 15_000 },
   use: { baseURL: "http://localhost:3210", viewport: { width: 1440, height: 1000 } },

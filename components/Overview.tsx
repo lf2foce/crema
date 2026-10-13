@@ -93,7 +93,7 @@ GET ${origin}/api/v1/metrics/:database/:key/values?grain=month&from=2026-01-01&v
 
       <div className="section row">
         <span className="grow faint small"><span className="mono">{state.source?.name}</span> · {state.source?.kind === "hosted" ? "hosted by Crema" : "connected"}</span>
-        <a className="btn sm ghost" href={`/#databases/${state.source?.id}`}>Manage in Databases</a>
+        <a className="btn sm ghost" href={`/#databases/${state.source?.slug}`}>Manage in Databases</a>
       </div>
 
       {payload !== null && (

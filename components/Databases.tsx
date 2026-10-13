@@ -28,17 +28,23 @@ const FORMATS: { id: string; label: string; render: (url: string) => string }[] 
  * development, staging. Connected databases are projects of one branch. Pick a branch to see how to
  * connect, browse its tables, open it in Crema, or manage it; hosting servers are listed below.
  */
-export function Databases({ state, selected, server, notify, reload }: { state: AppState; selected: number | null; server: number | null; notify: (t: string, e?: boolean) => void; reload: () => void }) {
+export function Databases({ state, selected, server, notify, reload }: { state: AppState; selected: string | null; server: number | null; notify: (t: string, e?: boolean) => void; reload: () => Promise<AppState | null> }) {
   const [creating, setCreating] = useState(false);
   const [adding, setAdding] = useState(false);
   const admin = state.me?.role === "admin";
   const projects = groupProjects(state.sources);
   const servers = state.servers;
   const srv = server ? servers.find((v) => v.id === server) ?? null : null;
-  const db = srv ? null : state.sources.find((d) => d.id === selected) ?? projects[0]?.branches[0] ?? null;
-  const go = (id: number) => { window.location.hash = `databases/${id}`; };
+  // a database is addressed by its slug (comic, comic_development); a bare id still works
+  const db = srv ? null : state.sources.find((d) => d.slug === selected || String(d.id) === selected) ?? projects[0]?.branches[0] ?? null;
+  const go = (slug: string) => { window.location.hash = `databases/${encodeURIComponent(slug)}`; };
   const goServer = (id: number) => { window.location.hash = `databases/server-${id}`; };
-  const changed = async (id?: number) => { await reload(); if (id) go(id); else window.location.hash = "databases"; };
+  // after a change: reload, then show that database (by id: it may be new), or the list
+  const changed = async (id?: number) => {
+    const fresh = await reload();
+    const target = id ? (fresh?.sources ?? state.sources).find((d) => d.id === id) : null;
+    if (target) go(target.slug); else window.location.hash = "databases";
+  };
   // Creating needs a server: the installation's own one is used without asking; only without one
   // does the admin add a server first
   const create = () => (servers.length || state.suggestedServer ? setCreating(true) : setAdding(true));
@@ -56,7 +62,7 @@ export function Databases({ state, selected, server, notify, reload }: { state: 
             <li key={pr.id} className="proj">
               <div className="proj-name ellipsis">{pr.name}</div>
               {pr.branches.map((d) => (
-                <button key={d.id} className={`sql-item ${d.id === db?.id ? "on" : ""}`} onClick={() => go(d.id)}>
+                <button key={d.id} className={`sql-item ${d.id === db?.id ? "on" : ""}`} onClick={() => go(d.slug)}>
                   <span className="row"><span className="ellipsis">{d.branch}</span><EnvBadge environment={d.environment} /></span>
                   <span className="faint">{d.kind === "hosted" ? "hosted" : "connected"}{d.kind === "hosted" ? ` · ${size(d.sizeBytes)}` : ""}{d.status !== "ready" ? ` · ${d.status === "provisioning" && d.parentId ? "copying" : d.status}` : ""}{d.metrics ? ` · ${d.metrics} metric${d.metrics > 1 ? "s" : ""}` : ""}</span>
                 </button>
@@ -64,19 +70,24 @@ export function Databases({ state, selected, server, notify, reload }: { state: 
             </li>
           ))}
         </ul>
-        {admin && <>
-          <div className="row side-head"><h4 className="grow">Hosting servers</h4><button className="btn ghost sm" onClick={() => setAdding(true)}>+ Add</button></div>
-          <ul className="sql-list">
-            {servers.map((v) => (
-              <li key={v.id} className={`saved ${v.id === srv?.id ? "on" : ""}`}>
-                <button className="sql-item" onClick={() => goServer(v.id)}>
-                  <span className="ellipsis">{v.name}</span>
-                  <span className="faint mono">{v.publicHost} · {v.databases} db{v.databases === 1 ? "" : "s"}</span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        </>}
+        {admin && (
+          // collapsed while there's just the one the installation came with: it's plumbing until you need a second
+          <details className="side-servers" open={!!srv || servers.length !== 1}>
+            <summary>Servers · {servers.length}</summary>
+            <p className="use-note side-note">Postgres servers where new projects are created. Not your own databases: those you connect.</p>
+            <ul className="sql-list">
+              {servers.map((v) => (
+                <li key={v.id} className={`saved ${v.id === srv?.id ? "on" : ""}`}>
+                  <button className="sql-item" onClick={() => goServer(v.id)}>
+                    <span className="ellipsis">{v.name}</span>
+                    <span className="faint mono">{v.publicHost} · {v.databases} db{v.databases === 1 ? "" : "s"}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+            <button className="btn ghost sm" onClick={() => setAdding(true)}>+ Add a server</button>
+          </details>
+        )}
       </aside>
 
       <main className="hosted-main">
@@ -165,7 +176,9 @@ function AddServer({ notify, onClose, onAdded }: { notify: (t: string, e?: boole
   const [url, setUrl] = useState("");
   const [name, setName] = useState("");
   const [publicHost, setPublicHost] = useState("");
-  const [ssl, setSsl] = useState(true);
+  const [sslChoice, setSslChoice] = useState<boolean | null>(null); // null: follow the address
+  const host = (publicHost.trim() || url).replace(/^[a-z]+:\/\/([^@/]*@)?/i, "").split(/[:/?]/)[0];
+  const ssl = sslChoice ?? !/^(localhost|127\.0\.0\.1|::1|)$/.test(host); // TLS unless it's this machine
   const [busy, setBusy] = useState(false);
   const done = (r: { server: { id: number; name: string }; createdProvisioner: string | null }) => {
     notify(r.createdProvisioner ? `${r.server.name} added. Crema created its own login ${r.createdProvisioner}; the superuser password wasn’t kept.` : `${r.server.name} added.`);
@@ -188,7 +201,7 @@ function AddServer({ notify, onClose, onAdded }: { notify: (t: string, e?: boole
           <label className="field grow">Address apps use<input className="input mono" value={publicHost} onChange={(e) => setPublicHost(e.target.value)} placeholder="same as above" /></label>
           <label className="field grow">Name<input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="the host" maxLength={60} /></label>
         </div>
-        <label className="row gap-2 small"><input type="checkbox" checked={ssl} onChange={(e) => setSsl(e.target.checked)} /> Apps must connect over TLS (sslmode=require)</label>
+        <label className="row gap-2 small"><input type="checkbox" checked={ssl} onChange={(e) => setSslChoice(e.target.checked)} /> Apps must connect over TLS (sslmode=require)</label>
         <div className="row"><span className="grow" /><button type="button" className="btn" onClick={onClose}>Cancel</button><button className="btn primary" disabled={busy || !url.trim()}>{busy ? <span className="spin" /> : "Add server"}</button></div>
       </form>
     </Modal>
@@ -211,7 +224,7 @@ function ServerDetail({ server, notify, onChanged }: { server: ServerInfo; notif
   };
   return (
     <div className="hosted-detail">
-      <div className="eyebrow">Postgres server</div>
+      <div className="eyebrow">Server · where new projects are created</div>
       <h1 className="title">{server.name}</h1>
       {check && !check.ok && <div className="callout warn small">{check.reason}</div>}
       <div className="hosted-stats">
@@ -296,11 +309,11 @@ function ProjectView({ db, all, server, admin, notify, onChanged }: { db: Source
       <div className="eyebrow">{hosted ? "Hosted project" : "Connected database"}</div>
       <div className="project-head"><h1 className="title">{db.projectName}</h1>{admin && <button className="btn ghost sm" onClick={() => setRenaming(true)} title="Rename the project (database names never change)">Rename</button>}</div>
       <nav className="branch-tabs" aria-label="Branches">
-        {siblings.map((d) => <a key={d.id} href={`#databases/${d.id}`} className={d.id === db.id ? "on" : ""} aria-current={d.id === db.id ? "page" : undefined}>{d.branch}<EnvBadge environment={d.environment} /></a>)}
+        {siblings.map((d) => <a key={d.id} href={`#databases/${encodeURIComponent(d.slug)}`} className={d.id === db.id ? "on" : ""} aria-current={d.id === db.id ? "page" : undefined}>{d.branch}<EnvBadge environment={d.environment} /></a>)}
         {admin && hosted && main.status === "ready" && <button type="button" onClick={() => setBranching(true)}>+ Branch</button>}
       </nav>
       {ready && <nav className="section-links" aria-label="Section">
-        <a href={`#databases/${db.id}`} className="on" aria-current="page">Connect</a>
+        <a href={`#databases/${encodeURIComponent(db.slug)}`} className="on" aria-current="page">Connect</a>
         <a href={sourceHref(db.slug, "tables")}>Tables</a>
         <a href={sourceHref(db.slug, "sql")}>SQL editor</a>
         <a href={sourceHref(db.slug, "schema")}>Schema</a>

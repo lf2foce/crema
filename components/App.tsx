@@ -13,9 +13,10 @@ import { Tables } from "./Tables";
 import { People } from "./People";
 import { Databases } from "./Databases";
 import { EnvBadge } from "./ui";
+import { NewVersion } from "./NewVersion";
 import { authClient } from "@/lib/authClient";
 
-export type Sel = { type: "list" } | { type: "business" } | { type: "new" } | { type: "schema" } | { type: "sql" } | { type: "people" } | { type: "databases"; id: number | null; server?: number } | { type: "connect" } | { type: "tables"; table: string | null } | { type: "proposal"; id: number } | { type: "metric"; key: string };
+export type Sel = { type: "list" } | { type: "business" } | { type: "new" } | { type: "schema" } | { type: "sql" } | { type: "people" } | { type: "databases"; ref: string | null; server?: number } | { type: "connect" } | { type: "tables"; table: string | null } | { type: "proposal"; id: number } | { type: "metric"; key: string };
 
 function readHash(): Sel {
   if (typeof window === "undefined") return { type: "list" };
@@ -25,20 +26,20 @@ function readHash(): Sel {
   if (h === "schema") return { type: "schema" };
   if (h === "sql") return { type: "sql" };
   if (h === "people") return { type: "people" };
-  if (h === "databases") return { type: "databases", id: null };
+  if (h === "databases") return { type: "databases", ref: null };
   if (h === "connect") return { type: "connect" };
   if (h === "tables") return { type: "tables", table: null };
   const [t, v] = h.split("/");
   if (t === "p" && v) return { type: "proposal", id: Number(v) };
   if (t === "m" && v) return { type: "metric", key: decodeURIComponent(v) };
   if (t === "tables" && v) return { type: "tables", table: decodeURIComponent(v) };
-  if (t === "databases" && v?.startsWith("server-")) return { type: "databases", id: null, server: Number(v.slice(7)) };
-  if (t === "databases" && v) return { type: "databases", id: Number(v) };
+  if (t === "databases" && v?.startsWith("server-")) return { type: "databases", ref: null, server: Number(v.slice(7)) };
+  if (t === "databases" && v) return { type: "databases", ref: decodeURIComponent(v) }; // a database's slug (an id still works)
   return { type: "list" };
 }
 
 export function hashOf(s: Sel) {
-  return s.type === "list" ? "#" : s.type === "business" ? "#business" : s.type === "new" ? "#new" : s.type === "schema" ? "#schema" : s.type === "sql" ? "#sql" : s.type === "people" ? "#people" : s.type === "databases" ? (s.server ? `#databases/server-${s.server}` : s.id ? `#databases/${s.id}` : "#databases") : s.type === "connect" ? "#connect" : s.type === "tables" ? (s.table ? `#tables/${encodeURIComponent(s.table)}` : "#tables") : s.type === "proposal" ? `#p/${s.id}` : `#m/${encodeURIComponent(s.key)}`;
+  return s.type === "list" ? "#" : s.type === "business" ? "#business" : s.type === "new" ? "#new" : s.type === "schema" ? "#schema" : s.type === "sql" ? "#sql" : s.type === "people" ? "#people" : s.type === "databases" ? (s.server ? `#databases/server-${s.server}` : s.ref ? `#databases/${encodeURIComponent(s.ref)}` : "#databases") : s.type === "connect" ? "#connect" : s.type === "tables" ? (s.table ? `#tables/${encodeURIComponent(s.table)}` : "#tables") : s.type === "proposal" ? `#p/${s.id}` : `#m/${encodeURIComponent(s.key)}`;
 }
 
 /** Workspace pages live at / (#databases, #people, #connect); one database's pages at /s/<slug>. */
@@ -49,14 +50,16 @@ export function App({ sourceSlug }: { sourceSlug: string | null }) {
   const [toast, setToast] = useState<{ text: string; error?: boolean } | null>(null);
   const [sel, setSelRaw] = useState<Sel>({ type: "list" });
 
-  const reload = useCallback(async () => {
+  /** Reloads the state and returns it (so a caller can act on what's there now). */
+  const reload = useCallback(async (): Promise<AppState | null> => {
     try {
       const s = await api<AppState>("/api/state");
       setCurrency(s.currency);
       session.set(s.me);
       setState(s);
       setError(null);
-    } catch (e) { setError((e as Error).message); }
+      return s;
+    } catch (e) { setError((e as Error).message); return null; }
   }, []);
   useEffect(() => {
     reload();
@@ -95,7 +98,7 @@ export function App({ sourceSlug }: { sourceSlug: string | null }) {
   if (!sourceSlug) {
     const ready = state.sources.filter((x) => x.status === "ready");
     if (sel.type === "people" && state.me) return <Shell state={state} sel={sel}><People me={state.me} notify={notify} />{toastEl}</Shell>;
-    if (sel.type === "databases") return <Shell state={state} sel={sel}><Databases state={state} selected={sel.id} server={sel.server ?? null} notify={notify} reload={reload} />{toastEl}</Shell>;
+    if (sel.type === "databases") return <Shell state={state} sel={sel}><Databases state={state} selected={sel.ref} server={sel.server ?? null} notify={notify} reload={reload} />{toastEl}</Shell>;
     if (sel.type === "connect" || !ready.length) return <Shell state={state} sel={sel}><Connect state={state} notify={notify} />{toastEl}</Shell>;
     // the workspace home is its first database
     if (typeof window !== "undefined") window.location.replace(sourceHref(ready[0].slug));
@@ -110,7 +113,7 @@ export function App({ sourceSlug }: { sourceSlug: string | null }) {
   );
   if (state.source.status !== "ready") return (
     <Shell state={state} sel={sel}>
-      <div className="center"><div className="hero"><h1>{state.source.name} isn’t ready</h1><p className="lead">{state.source.status === "provisioning" ? "It’s being created." : state.source.error ?? "It failed to provision."}</p><a className="btn" href={`/#databases/${state.source.id}`}>Open in Databases</a></div></div>
+      <div className="center"><div className="hero"><h1>{state.source.name} isn’t ready</h1><p className="lead">{state.source.status === "provisioning" ? "It’s being created." : state.source.error ?? "It failed to provision."}</p><a className="btn" href={`/#databases/${state.source.slug}`}>Open in Databases</a></div></div>
     </Shell>
   );
   if (state.run?.status === "running") return <Shell state={state} sel={sel}><Discovery runId={state.run.id} onDone={() => { setSel({ type: "list" }); reload(); }} /></Shell>;
@@ -154,7 +157,7 @@ function DatabaseTabs({ sel, state }: { sel: Sel; state: AppState }) {
   const siblings = state.sources.filter((d) => d.projectId === src.projectId && d.status === "ready");
   return (
     <nav className="dbtabs" aria-label="Database">
-      <a href={`/#databases/${src.id}`}>Connect</a>
+      <a href={`/#databases/${src.slug}`}>Connect</a>
       {tabs.map(([t, label, href]) => <a key={t} href={href} className={sel.type === t ? "on" : ""} aria-current={sel.type === t ? "page" : undefined}>{label}</a>)}
       <span className="grow" />
       <span className="dbtabs-env">
@@ -187,6 +190,7 @@ function Shell({ state, sel, children }: { state?: AppState; sel: Sel; children:
   const workspacePage = !src;
   return (
     <>
+      <NewVersion />
       <header className="statusbar">
         <span className="sb-left">
           {src && inner ? <a href="#" className="on">← all metrics</a> : <a href="/#databases">crema</a>}
