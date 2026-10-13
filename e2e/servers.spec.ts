@@ -50,7 +50,7 @@ test("add a server → create a database → connect → delete → remove the s
 
   // no server yet: creating a database starts by adding one; production offers no shortcut
   await page.goto("/projects");
-  await page.getByRole("button", { name: "New project", exact: true }).click();
+  await page.getByRole("button", { name: "+ New project" }).click(); // the sidebar's: there whatever else exists (the full run has a demo already)
   await expect(page.getByRole("heading", { name: "Add a hosting server" })).toBeVisible();
   await page.getByLabel("Admin connection string").fill(ADMIN_URL);
   await page.getByLabel("Address apps use").fill("db.example.com:6543");

@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 
+// Named 0-… so it runs first: it starts from an empty instance (nobody signed in, the first account becomes the admin).
 test("set up → connect → discover → review → certify → reuse", async ({ page }) => {
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
@@ -18,6 +19,15 @@ test("set up → connect → discover → review → certify → reuse", async (
   // 1. connect
   await expect(page).not.toHaveURL(/sign-in/);
   await expect(page.getByRole("heading", { name: /Connect a database/ })).toBeVisible();
+  // the Connect page stays compact: one input and one action, the demo on the "No database yet?" line, the three promises
+  await expect(page.getByLabel("Postgres connection string")).toBeVisible();
+  await expect(page.getByRole("button", { name: /connect & scan/ })).toBeVisible();
+  await expect(page.getByRole("group", { name: /What is this database/ })).toHaveCount(0); // what a database is gets set on its own page
+  await expect(page.getByRole("button", { name: /open demo/ })).toHaveCount(0);
+  await expect(page.locator(".connect-alt")).toContainText("No database yet?");
+  await expect(page.getByText("Never writes to your database")).toBeVisible();
+  await expect(page.getByText("No rows sent to the AI")).toBeVisible();
+  await expect(page.getByText("A person certifies every metric")).toBeVisible();
   await page.getByRole("button", { name: "try the demo database" }).click();
   // the status bar knows the database you just made (it once showed the first one in the list)
   await expect(page).toHaveURL(/\/projects\/[^/]+\/metrics/);
@@ -53,6 +63,7 @@ test("set up → connect → discover → review → certify → reuse", async (
   // 3. review: open the first (most contested) proposal, with evidence on real data
   await page.getByRole("link", { name: /Review first one/ }).click();
   await expect(page.getByText("Needs your decision")).toBeVisible();
+  await expect(header.getByRole("link", { name: "← all metrics" })).toBeVisible(); // inside a page, the way back is the green link
   await expect(page.getByText("Checked by Crema against your data, not by the model")).toBeVisible();
   await expect(page.getByText("Observed in your database")).toBeVisible();
   await expect(page.getByText("Inferred business meaning")).toBeVisible();

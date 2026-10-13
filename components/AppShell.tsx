@@ -114,7 +114,7 @@ const DATABASE_PAGES = ["schema", "tables", "sql"];
 
 /** The slim header: where you are (crema, all metrics / this metric) and the two places to go from a database. */
 function StatusBar() {
-  const { slug, state } = useApp();
+  const { slug, state, workspace } = useApp();
   const pathname = usePathname();
   const params = useParams<{ key?: string; id?: string }>();
   const section = sectionOf(pathname);              // which page of a database; null elsewhere
@@ -122,11 +122,13 @@ function StatusBar() {
   const busy = !!src && state?.run?.status === "running";
   const onMetric = section === "metrics" && !!params.key;
   const onProposal = section === "proposals";
+  const inner = !!section && section !== "metrics" || onMetric;   // a page inside a database other than its metrics list
   return (
     <header className="statusbar">
       <span className="sb-left">
         <Link href={routes.projects} className="sb-brand">crema</Link>
-        {src && <><span>—</span><Link href={routes.metrics(src.slug)} className={section === "metrics" && !onMetric ? "on" : ""}>all metrics</Link></>}
+        {!src && workspace?.me?.role === "admin" && <Link href={routes.people} className={pathname === routes.people ? "on" : ""} title="People who can sign in">People</Link>}
+        {src && <><span>—</span><Link href={routes.metrics(src.slug)} className={inner ? "on" : ""}>{inner ? "← all metrics" : "all metrics"}</Link></>}
         {onMetric && <span className="ellipsis">/ {safeDecode(params.key!)}</span>}
         {onProposal && <span className="ellipsis">/ {state?.proposals.find((p) => p.id === Number(params.id))?.key ?? "proposal"}</span>}
       </span>
@@ -182,22 +184,18 @@ function Sidebar({ setSlot }: { setSlot: (el: HTMLDivElement | null) => void }) 
       {src ? (
         <>
           <div className="nav-scroll">
-            {!scanning && <Link href={routes.newMetric(src.slug)} className="btn sm nav-new">+ New metric</Link>}
+            {!scanning && <div className="nav-new"><Link href={routes.newMetric(src.slug)} className="btn sm">+ New metric</Link></div>}
             {needs.length > 0 && <h4>Needs you · {needs.length}</h4>}
-            {needs.map((c) => <Link key={c.id} href={routes.proposal(src.slug, c.id)} className={`nav-item ${pathname === routes.proposal(src.slug, c.id) ? "on" : ""}`}><span>{c.name}</span><i className="dot warn" /></Link>)}
+            {needs.map((c) => <Link key={c.id} href={routes.proposal(src.slug, c.id)} className={`nav-item ${pathname === routes.proposal(src.slug, c.id) ? "on" : ""}`}><span>{c.name}</span></Link>)}
             {looks.length > 0 && <h4>Looks right · {looks.length}</h4>}
-            {looks.map((c) => <Link key={c.id} href={routes.proposal(src.slug, c.id)} className={`nav-item ${pathname === routes.proposal(src.slug, c.id) ? "on" : ""}`}><span>{c.name}</span><i className="dot" /></Link>)}
+            {looks.map((c) => <Link key={c.id} href={routes.proposal(src.slug, c.id)} className={`nav-item ${pathname === routes.proposal(src.slug, c.id) ? "on" : ""}`}><span>{c.name}</span></Link>)}
             {metrics.length > 0 && <h4>Certified · {metrics.length}</h4>}
-            {metrics.map((m) => <Link key={m.key} href={routes.metric(src.slug, m.key)} className={`nav-item ${pathname === routes.metric(src.slug, m.key) ? "on" : ""}`}><span>{m.name}</span><i className="dot ok" /></Link>)}
+            {metrics.map((m) => <Link key={m.key} href={routes.metric(src.slug, m.key)} className={`nav-item ${pathname === routes.metric(src.slug, m.key) ? "on" : ""}`}><span>{m.name}</span></Link>)}
             {!queue.length && !metrics.length && <p className="nav-empty">{scanning ? "Scanning…" : "Nothing yet."}</p>}
           </div>
         </>
       ) : (
         <>
-          <nav className="nav-links" aria-label="Workspace">
-            {link(routes.projects, "Projects", pathname === routes.projects || pathname.startsWith("/projects/") || pathname.startsWith("/servers/") || pathname === routes.connect)}
-            {me?.role === "admin" && link(routes.people, "People", pathname === routes.people)}
-          </nav>
           <div className="nav-scroll" ref={setSlot} />
         </>
       )}

@@ -68,12 +68,16 @@ export function Databases({ state, selected, server, notify, reload }: { state: 
           {projects.map((pr) => (
             <li key={pr.id} className="proj">
               <div className="proj-name ellipsis">{pr.name}</div>
-              {pr.branches.map((d) => (
-                <button key={d.id} className={`sql-item ${d.id === db?.id ? "on" : ""}`} onClick={() => go(d.slug)}>
-                  <span className="row"><span className="ellipsis">{d.branch}</span><EnvBadge environment={d.environment} /></span>
-                  <span className="faint">{d.kind === "hosted" ? "hosted" : "connected"}{d.kind === "hosted" ? ` · ${size(d.sizeBytes)}` : ""}{d.status !== "ready" ? ` · ${d.status === "provisioning" && d.parentId ? "copying" : d.status}` : ""}{d.metrics ? ` · ${d.metrics} metric${d.metrics > 1 ? "s" : ""}` : ""}</span>
-                </button>
-              ))}
+              {pr.branches.map((d) => {
+                const problem = d.status !== "ready";
+                const meta = problem ? (d.status === "provisioning" && d.parentId ? "copying" : d.status) : d.kind === "hosted" ? size(d.sizeBytes) : "connected";
+                return (
+                  <button key={d.id} className={`sql-item ${d.id === db?.id ? "on" : ""}`} onClick={() => go(d.slug)} title={`${d.kind === "hosted" ? "hosted" : "connected"}${d.metrics ? ` · ${d.metrics} metric${d.metrics > 1 ? "s" : ""}` : ""}`}>
+                    <span className="ellipsis">{d.branch}</span><EnvBadge environment={d.environment} />
+                    <span className={`meta ${problem ? "warn" : ""}`}>{meta}</span>
+                  </button>
+                );
+              })}
             </li>
           ))}
         </ul>
