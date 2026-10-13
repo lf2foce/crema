@@ -10,7 +10,7 @@ export type ServerInfo = Server & { databases: number };
 export type AppState = {
   workspace: string;
   sources: SourceInfo[];
-  /** the database this page is about (/s/<slug>), or null on workspace pages */
+  /** the database this page is about (/projects/<slug>/…), or null on workspace pages */
   source: Source | null;
   servers: ServerInfo[];
   /** a server this installation offers in one click (bundled hosting server, or this machine in development) */
@@ -33,7 +33,6 @@ export type { AuditEvent, Concept, Metric, Run, Server, Source, Verification };
 // The source this page works in: sent with every API call so the server scopes the request to it.
 let currentSource: string | null = null;
 export const setCurrentSource = (slug: string | null) => { currentSource = slug; };
-export const sourceHref = (slug: string, hash = "") => `/s/${encodeURIComponent(slug)}${hash ? `#${hash.replace(/^#/, "")}` : ""}`;
 
 const store = {
   get(k: string) { try { return localStorage.getItem(k); } catch { return null; } },
@@ -54,7 +53,7 @@ export async function api<T = any>(path: string, opts: { method?: string; body?:
   const json = await res.json().catch(() => ({}));
   // signed out (or the session expired): go sign in and come back here
   if (res.status === 401 && typeof window !== "undefined" && !retried) {
-    window.location.href = `/sign-in?next=${encodeURIComponent(window.location.pathname + window.location.hash)}`;
+    window.location.href = `/sign-in?next=${encodeURIComponent(window.location.pathname + window.location.search)}`;
     return new Promise<T>(() => {});
   }
   if (!res.ok) throw new Error(json.error ?? `Request failed (${res.status})`);

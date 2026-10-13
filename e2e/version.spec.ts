@@ -9,7 +9,7 @@ test("a tab from an older build is told to reload", async ({ page }) => {
   await page.getByLabel("Password").fill("e2e-password-1");
   await page.getByRole("button", { name: first ? "Create admin account" : "Sign in" }).click();
   await expect(page).not.toHaveURL(/sign-in/);
-  await page.goto("/#databases");
+  await page.goto("/projects");
   await expect(page.getByText("A new version of Crema is available.")).toHaveCount(0); // same build: quiet
   // the server now answers with a different build id, as after a deploy
   await page.route("**/api/version", (r) => r.fulfill({ json: { build: "newer" } }));

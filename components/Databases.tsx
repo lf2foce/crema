@@ -1,6 +1,9 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
-import { ago, api, sourceHref, type AppState, type ServerInfo, type SourceInfo } from "@/lib/client";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { ago, api, type AppState, type ServerInfo, type SourceInfo } from "@/lib/client";
+import { routes } from "@/lib/routes";
 import { Copy, EnvBadge, Modal, useConfirm } from "./ui";
 import { DB_NAME_MAX, dbNameProblem, naturalDbName } from "@/lib/dbName";
 
@@ -35,15 +38,17 @@ export function Databases({ state, selected, server, notify, reload }: { state: 
   const projects = groupProjects(state.sources);
   const servers = state.servers;
   const srv = server ? servers.find((v) => v.id === server) ?? null : null;
-  // a database is addressed by its slug (comic, comic_development); a bare id still works
-  const db = srv ? null : state.sources.find((d) => d.slug === selected || String(d.id) === selected) ?? projects[0]?.branches[0] ?? null;
-  const go = (slug: string) => { window.location.hash = `databases/${encodeURIComponent(slug)}`; };
-  const goServer = (id: number) => { window.location.hash = `databases/server-${id}`; };
+  // a database is addressed by its slug: comic, comic_development
+  const db = srv ? null : state.sources.find((d) => d.slug === selected) ?? projects[0]?.branches[0] ?? null;
+  const router = useRouter();
+  const go = (slug: string) => router.push(routes.project(slug));
+  const goServer = (id: number) => router.push(routes.server(id));
   // after a change: reload, then show that database (by id: it may be new), or the list
   const changed = async (id?: number) => {
     const fresh = await reload();
     const target = id ? (fresh?.sources ?? state.sources).find((d) => d.id === id) : null;
-    if (target) go(target.slug); else window.location.hash = "databases";
+    const to = target ? routes.project(target.slug) : routes.projects;
+    if (window.location.pathname !== to) router.push(to); // (a refresh while a copy runs lands here too: no new history entry)
   };
   // Creating needs a server: the installation's own one is used without asking; only without one
   // does the admin add a server first
@@ -54,7 +59,7 @@ export function Databases({ state, selected, server, notify, reload }: { state: 
       <aside className="sql-side">
         {admin && <div className="row gap-2">
           <button className="btn primary sm grow" onClick={create}>+ New project</button>
-          <a className="btn sm grow" href="/#connect">Connect existing</a>
+          <Link className="btn sm grow" href={routes.connect}>Connect existing</Link>
         </div>}
         <h4>{projects.length} project{projects.length === 1 ? "" : "s"}</h4>
         <ul className="sql-list">
@@ -96,7 +101,7 @@ export function Databases({ state, selected, server, notify, reload }: { state: 
           <div className="hosted-empty">
             <h1 className="title">Your projects</h1>
             <p className="meaning">Connect a database you already have, or create a new project for an app — and let Crema find and certify its metrics.</p>
-            <div className="row gap-3"><a className="btn primary lg" href="/#connect">Connect a database</a>{admin && <button className="btn lg" onClick={create}>New project</button>}</div>
+            <div className="row gap-3"><Link className="btn primary lg" href={routes.connect}>Connect a database</Link>{admin && <button className="btn lg" onClick={create}>New project</button>}</div>
           </div>
         )}
       </main>
@@ -309,15 +314,15 @@ function ProjectView({ db, all, server, admin, notify, onChanged }: { db: Source
       <div className="eyebrow">{hosted ? "Hosted project" : "Connected database"}</div>
       <div className="project-head"><h1 className="title">{db.projectName}</h1>{admin && <button className="btn ghost sm" onClick={() => setRenaming(true)} title="Rename the project (database names never change)">Rename</button>}</div>
       <nav className="branch-tabs" aria-label="Branches">
-        {siblings.map((d) => <a key={d.id} href={`#databases/${encodeURIComponent(d.slug)}`} className={d.id === db.id ? "on" : ""} aria-current={d.id === db.id ? "page" : undefined}>{d.branch}<EnvBadge environment={d.environment} /></a>)}
+        {siblings.map((d) => <Link key={d.id} href={routes.project(d.slug)} className={d.id === db.id ? "on" : ""} aria-current={d.id === db.id ? "page" : undefined}>{d.branch}<EnvBadge environment={d.environment} /></Link>)}
         {admin && hosted && main.status === "ready" && <button type="button" onClick={() => setBranching(true)}>+ Branch</button>}
       </nav>
       {ready && <nav className="section-links" aria-label="Section">
-        <a href={`#databases/${encodeURIComponent(db.slug)}`} className="on" aria-current="page">Connect</a>
-        <a href={sourceHref(db.slug, "tables")}>Tables</a>
-        <a href={sourceHref(db.slug, "sql")}>SQL editor</a>
-        <a href={sourceHref(db.slug, "schema")}>Schema</a>
-        <a href={sourceHref(db.slug)}>Metrics</a>
+        <Link href={routes.project(db.slug)} className="on" aria-current="page">Connect</Link>
+        <Link href={routes.tables(db.slug)}>Tables</Link>
+        <Link href={routes.sql(db.slug)}>SQL editor</Link>
+        <Link href={routes.schema(db.slug)}>Schema</Link>
+        <Link href={routes.metrics(db.slug)}>Metrics</Link>
       </nav>}
     </>
   );
@@ -350,7 +355,7 @@ function ProjectView({ db, all, server, admin, notify, onChanged }: { db: Source
         <p className="m-0 muted">A label for people; Crema reads it the same way whatever you choose. Development isn’t checked on a schedule and isn’t offered to consumers by default.</p>
       </section>
       <section className="hosted-card">
-        <div className="row"><p className="m-0 grow muted">Crema reads it in read-only transactions with the connection string you gave; it’s stored encrypted.</p><a className="btn primary" href={sourceHref(db.slug)}>Open</a></div>
+        <div className="row"><p className="m-0 grow muted">Crema reads it in read-only transactions with the connection string you gave; it’s stored encrypted.</p><Link className="btn primary" href={routes.metrics(db.slug)}>Open</Link></div>
       </section>
       {admin && <section className="hosted-card danger">
         <div className="hosted-card-head"><h2>Danger zone</h2></div>
@@ -411,7 +416,7 @@ function ProjectView({ db, all, server, admin, notify, onChanged }: { db: Source
 
       {ready && <section className="hosted-card">
         <div className="hosted-card-head"><h2>Crema</h2></div>
-        <div className="row"><p className="m-0 grow muted">{cremaNote}</p><a className="btn primary" href={sourceHref(db.slug)}>Open</a></div>
+        <div className="row"><p className="m-0 grow muted">{cremaNote}</p><Link className="btn primary" href={routes.metrics(db.slug)}>Open</Link></div>
       </section>}
 
       {admin && <section className="hosted-card danger">

@@ -1,4 +1,6 @@
 "use client";
+import Link from "next/link";
+import { routes } from "@/lib/routes";
 import { useEffect, useState } from "react";
 import { actor, ago, api, type AppState, type AuditEvent } from "@/lib/client";
 import { Code, ConfidenceChip, Modal } from "./ui";
@@ -93,7 +95,7 @@ GET ${origin}/api/v1/metrics/:database/:key/values?grain=month&from=2026-01-01&v
 
       <div className="section row">
         <span className="grow faint small"><span className="mono">{state.source?.name}</span> · {state.source?.kind === "hosted" ? "hosted by Crema" : "connected"}</span>
-        <a className="btn sm ghost" href={`/#databases/${state.source?.slug}`}>Manage in Databases</a>
+        <Link className="btn sm ghost" href={routes.project(state.source!.slug)}>Manage in Databases</Link>
       </div>
 
       {payload !== null && (

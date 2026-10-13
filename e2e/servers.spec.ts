@@ -49,7 +49,7 @@ test("add a server → create a database → connect → delete → remove the s
   await expect(page).not.toHaveURL(/sign-in/);
 
   // no server yet: creating a database starts by adding one; production offers no shortcut
-  await page.goto("/#databases");
+  await page.goto("/projects");
   await page.getByRole("button", { name: "New project", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Add a hosting server" })).toBeVisible();
   await page.getByLabel("Admin connection string").fill(ADMIN_URL);
@@ -91,7 +91,7 @@ test("add a server → create a database → connect → delete → remove the s
   await expect(page.getByText("E2E Shop is ready, with a development branch.")).toBeVisible();
   await expect(page.getByRole("heading", { name: "E2E Shop" })).toBeVisible();
   const tabs = page.getByRole("navigation", { name: "Branches" });
-  await expect(page).toHaveURL(new RegExp(`#databases/${DB}$`)); // a database is addressed by its name, not a number
+  await expect(page).toHaveURL(new RegExp(`/projects/${DB}$`)); // a real path, and a database is addressed by its name
   await expect(tabs.getByRole("link", { name: /^production/ })).toContainText("PROD");
   await expect(tabs.getByRole("link", { name: /^development/ })).toContainText("DEV");
   // the sidebar groups by project, branches under it
@@ -101,8 +101,18 @@ test("add a server → create a database → connect → delete → remove the s
   expect(psql(`SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname = '${DB}'`)).toBe(`${DB}_owner`);
   // one click from the connection to its tables, SQL editor and metrics
   const sections = page.getByRole("navigation", { name: "Section" });
-  await expect(sections.getByRole("link", { name: "Tables" })).toHaveAttribute("href", /\/s\/e2e_shop#tables$/);
-  await expect(sections.getByRole("link", { name: "SQL editor" })).toHaveAttribute("href", /\/s\/e2e_shop#sql$/);
+  await expect(sections.getByRole("link", { name: "Tables" })).toHaveAttribute("href", `/projects/${DB}/tables`);
+  await expect(sections.getByRole("link", { name: "SQL editor" })).toHaveAttribute("href", `/projects/${DB}/sql`);
+
+  // a real route: its own page, with the PROD badge and the tab bar, and back goes where you came from
+  await sections.getByRole("link", { name: "Tables" }).click();
+  await expect(page).toHaveURL(new RegExp(`/projects/${DB}/tables$`));
+  await expect(page.getByRole("navigation", { name: "Database" })).toContainText("PROD");
+  await page.goBack();
+  await expect(page).toHaveURL(new RegExp(`/projects/${DB}$`));
+  await expect(page.getByRole("heading", { name: "E2E Shop" })).toBeVisible();
+  await page.reload(); // Enter on the URL is a real load now
+  await expect(page.getByRole("heading", { name: "E2E Shop" })).toBeVisible();
 
   // the development branch is made by the worker; production's tables then reach a staging branch with data
   await expect(tabs.getByRole("link", { name: /^development/ })).toBeVisible();

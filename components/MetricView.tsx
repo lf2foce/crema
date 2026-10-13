@@ -1,8 +1,10 @@
 "use client";
+import Link from "next/link";
+import { routes } from "@/lib/routes";
 import { useCallback, useEffect, useState } from "react";
 import { display } from "@/core/format";
 import type { MetricKind, MetricUnit, SeriesPoint } from "@/core/types";
-import { actor, ago, api, windowLabel, type AuditEvent, type Verification, sourceHref, type Source } from "@/lib/client";
+import { actor, ago, api, windowLabel, type AuditEvent, type Verification, type Source } from "@/lib/client";
 import { Checks, Code, LineChart, useConfirm } from "./ui";
 
 type Contract = {
@@ -43,7 +45,7 @@ export function MetricView({ source, metricKey, back, notify, reload, cwd, token
     api<Values>(`/api/v1/metrics/${ref}/values${q}`).then(setNow).catch(failed);
   }, [m, grain, ref]);
 
-  if (err && !m) return <div className="page"><a className="crumb" href="#">← Metrics</a><p className="muted">{err}</p></div>;
+  if (err && !m) return <div className="page"><Link className="crumb" href={routes.metrics(source.slug)}>← Metrics</Link><p className="muted">{err}</p></div>;
   if (!m) return <div className="page"><span className="spin" /></div>;
 
   const origin = typeof window !== "undefined" ? window.location.origin : "http://localhost:3300";
@@ -52,7 +54,7 @@ export function MetricView({ source, metricKey, back, notify, reload, cwd, token
   const mcpLocal = JSON.stringify({ mcpServers: { crema: { command: "npx", args: ["tsx", `${cwd}/bin/crema.ts`, "mcp"] } } }, null, 2);
   const cli = `npx tsx bin/crema.ts query ${ref} --grain month --from 2026-01-01`;
 
-  const link = `${origin}${sourceHref(source.slug, `m/${encodeURIComponent(m.key)}`)}`;
+  const link = `${origin}${routes.metric(source.slug, m.key)}`;
   const sheet = `=IMPORTDATA("${origin}/api/v1/metrics/${ref}/values?grain=month&format=csv&token=YOUR_API_TOKEN")`;
   const me = actor.get();
   const who = (name: string) => (me && name === me ? "you" : name);

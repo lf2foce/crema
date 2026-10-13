@@ -32,7 +32,7 @@ Docker: copy `.env.docker.example` to `.env.docker.local`, fill the secrets, the
 `docker compose --env-file .env.docker.local up --build -d`.
 See [deployment instructions](docs/deployment.md) for lifecycle, migrations and Dokploy.
 
-Each database you connect (or create) is a **source** in the workspace: it has its own schema map, tables, SQL editor, proposals and certified metrics, at `/s/<source>`. A metric always runs on the source it was certified on. Add more from **databases** in the status bar.
+Each database you connect (or create) is a **source** in the workspace: it has its own schema map, tables, SQL editor, proposals and certified metrics, at `/projects/<source>/…` (`/metrics`, `/schema`, `/tables`, `/sql`). A metric always runs on the source it was certified on. Add more from **databases** in the status bar.
 
 Click **Try it on a demo SaaS database**. About a minute later you're reviewing proposals. To use your own database, paste a connection string (preferably a read-only role) or set `CREMA_DATABASE_URL`.
 
@@ -104,7 +104,7 @@ What you create is a **project** (`ComicAI`). Its **production** branch is the h
 
 Environment policy: development isn't discovered or drift-checked on a schedule, and consumers (API, MCP, agents) are offered production's metrics by default, plus those of databases nobody labelled: staging and development metrics need `/api/v1/metrics?all=1` (the metric's own ref always works); open it to look around or analyse on demand. Metrics belong to the branch they were certified on.
 
-From a project's page, one click goes to its Tables, SQL editor, Schema and Metrics, and every database page has a branch switcher.
+From a project's page (`/projects/comic`), one click goes to its Tables, SQL editor, Schema and Metrics (`/projects/comic/tables`…), and every database page has a branch switcher. URLs are real paths, one route file per page under `app/(app)/`; no `#` navigation.
 
 The worker fills a branch with a consistent snapshot of production: `pg_dump` (one repeatable-read transaction, main keeps serving) piped into `pg_restore` as the branch's owner, so every table belongs to the branch. Choose **schema + data** or **schema only** (no customer rows in development). **Reset from main** drops the branch's database and copies again; its connection string doesn't change.
 

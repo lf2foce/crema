@@ -1,4 +1,7 @@
 "use client";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { routes } from "@/lib/routes";
 import { useEffect, useMemo, useState } from "react";
 import { display } from "@/core/format";
 import { actorLabel, ago, api, contested, spreadOf, type AppState, type Concept, type Metric } from "@/lib/client";
@@ -15,11 +18,13 @@ export function Registry({ state, proposals, reload, notify }: { state: AppState
   const [q, setQ] = useState("");
   const [sel, setSel] = useState(0);
   const [ask, setAsk] = useState("");
+  const router = useRouter();
+  const slug = state.source!.slug;
 
   const rows: Row[] = useMemo(() => [
-    ...proposals.map((c) => ({ kind: "proposal" as const, id: `p${c.id}`, href: `#p/${c.id}`, c })),
-    ...state.metrics.map((m) => ({ kind: "metric" as const, id: `m${m.key}`, href: `#m/${encodeURIComponent(m.key)}`, m })),
-  ], [proposals, state.metrics]);
+    ...proposals.map((c) => ({ kind: "proposal" as const, id: `p${c.id}`, href: routes.proposal(slug, c.id), c })),
+    ...state.metrics.map((m) => ({ kind: "metric" as const, id: `m${m.key}`, href: routes.metric(slug, m.key), m })),
+  ], [proposals, state.metrics, slug]);
 
   const needs = proposals.filter(contested);
   const shown = rows.filter((r) => {
@@ -36,7 +41,7 @@ export function Registry({ state, proposals, reload, notify }: { state: AppState
       if ((e.target as HTMLElement).closest("input, textarea, select")) return;
       if (e.key === "j") setSel((i) => Math.min(shown.length - 1, i + 1));
       else if (e.key === "k") setSel((i) => Math.max(0, i - 1));
-      else if (e.key === "Enter" && shown[sel] && document.activeElement === document.body) window.location.hash = shown[sel].href;
+      else if (e.key === "Enter" && shown[sel] && document.activeElement === document.body) router.push(shown[sel].href);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -71,7 +76,7 @@ export function Registry({ state, proposals, reload, notify }: { state: AppState
         if (!ask.trim()) return;
         try { await api("/api/discover", { body: { focus: ask.trim() } }); setAsk(""); reload(); } catch (err) { notify((err as Error).message, true); }
       }}>
-        <span><b>Missing a metric?</b> Ask the model to define it by name, or <a href="#new">write it yourself</a>.</span>
+        <span><b>Missing a metric?</b> Ask the model to define it by name, or <Link href={routes.newMetric(slug)}>write it yourself</Link>.</span>
         <input className="input" placeholder="e.g. net revenue retention" value={ask} onChange={(e) => setAsk(e.target.value)} aria-label="Metric to propose" />
         <button className="btn sm" disabled={!ask.trim() || !state.model.configured}>Propose</button>
       </form>
@@ -83,7 +88,7 @@ export function Registry({ state, proposals, reload, notify }: { state: AppState
             ? `Start with the ${needs.length} that need${needs.length === 1 ? "s" : ""} you${n - needs.length ? ` — the other ${n - needs.length} take a minute.` : "."}`
             : `${n} definition${n === 1 ? "" : "s"} to review. Each takes a minute.`
           : "Everything proposed has been decided."}</p>
-        {first && <a className="btn primary lg" href={`#p/${first.id}`}>Review first one</a>}
+        {first && <Link className="btn primary lg" href={routes.proposal(slug, first.id)}>Review first one</Link>}
       </div>
     </div>
   );
@@ -95,7 +100,7 @@ function ProposalRow({ r, selected }: { r: Extract<Row, { kind: "proposal" }>; s
   const split = contested(c);
   const conf = CONF[c0?.confidence ?? "medium"];
   return (
-    <a className={`reg-row ${selected ? "sel" : ""}`} href={r.href} data-state="proposal">
+    <Link className={`reg-row ${selected ? "sel" : ""}`} href={r.href} data-state="proposal">
       <div className="reg-name"><h2>{c.name}</h2><code>{c.key}</code></div>
       <div className="reg-meaning" title={c0?.description}>{c.question}</div>
       <div className="reg-value">
@@ -109,7 +114,7 @@ function ProposalRow({ r, selected }: { r: Extract<Row, { kind: "proposal" }>; s
           : <span className="conf" style={{ ["--w" as string]: conf.w, ["--c" as string]: conf.c }}><i />{conf.t}</span>}
       </div>
       <div className={`reg-status ${split ? "needs" : ""}`}>{split ? "Needs you →" : "Looks right"}</div>
-    </a>
+    </Link>
   );
 }
 
@@ -117,12 +122,12 @@ function MetricRow({ r, selected }: { r: Extract<Row, { kind: "metric" }>; selec
   const m = r.m;
   const cur = m.current;
   return (
-    <a className={`reg-row ${selected ? "sel" : ""}`} href={r.href} data-state="certified">
+    <Link className={`reg-row ${selected ? "sel" : ""}`} href={r.href} data-state="certified">
       <div className="reg-name"><h2>{m.name}</h2><code>{m.key}</code></div>
       <div className="reg-meaning" title={cur.description}>{cur.question}</div>
       <div className="reg-value">{display(cur.verification.value, cur.unit)}</div>
       <div><span className="conf" style={{ ["--w" as string]: "100%", ["--c" as string]: "var(--ok)" }}><i />a person decided</span></div>
       <div className={`reg-status ${m.status === "needs_attention" ? "needs" : "ok"}`} title={m.attention ?? undefined}>{m.status === "needs_attention" ? "Needs attention" : `✓ Certified v${m.currentVersion}`}<small>{actorLabel(cur.certifiedBy)} · {ago(cur.certifiedAt)}{cur.origin === "human" ? " · by hand" : ""}</small></div>
-    </a>
+    </Link>
   );
 }

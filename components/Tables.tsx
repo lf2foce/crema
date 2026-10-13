@@ -1,4 +1,8 @@
 "use client";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { routes } from "@/lib/routes";
+import { useSlug } from "./AppShell";
 import { useEffect, useMemo, useState } from "react";
 import { fmt } from "@/core/format";
 import type { EntityReading, Table } from "@/core/types";
@@ -11,6 +15,8 @@ const short = (q: string) => q.replace(/^public\./, "");
 const SIZES = [25, 50, 100, 200];
 
 export function Tables({ table, notify }: { table: string | null; notify: (t: string, e?: boolean) => void }) {
+  const slug = useSlug();
+  const router = useRouter();
   const [tables, setTables] = useState<Table[]>([]);
   const [entities, setEntities] = useState<EntityReading[]>([]);
   const [q, setQ] = useState("");
@@ -47,7 +53,7 @@ export function Tables({ table, notify }: { table: string | null; notify: (t: st
     if (!current) return;
     const order = sort.order ? `\nORDER BY "${sort.order}" ${sort.dir.toUpperCase()}` : "";
     try { localStorage.setItem(OPEN_IN_EDITOR, JSON.stringify(`SELECT *\nFROM ${current.qualified}${order}\nLIMIT ${limit};`)); } catch { /* private mode */ }
-    window.location.hash = "#sql";
+    router.push(routes.sql(slug));
   };
 
   return (
@@ -58,9 +64,9 @@ export function Tables({ table, notify }: { table: string | null; notify: (t: st
         <ul className="sql-list">
           {shown.map((t) => (
             <li key={t.qualified} className={current?.qualified === t.qualified ? "on" : ""}>
-              <a className="sql-item" href={`#tables/${encodeURIComponent(t.qualified)}`}>
+              <Link className="sql-item" href={routes.tables(slug, t.qualified)}>
                 <span className="mono ellipsis">{short(t.qualified)}</span><span className="faint">{fmt(t.estimatedRows)}</span>
-              </a>
+              </Link>
             </li>
           ))}
         </ul>
@@ -74,7 +80,7 @@ export function Tables({ table, notify }: { table: string | null; notify: (t: st
               {meaning && <span className="muted small ellipsis">{meaning}</span>}
             </div>
             <span className="grow" />
-            <a className="btn" href="#schema">Schema map</a>
+            <Link className="btn" href={routes.schema(slug)}>Schema map</Link>
             <button className="btn" onClick={toEditor}>Query in SQL editor</button>
           </div>
           <div className="sql-results tbl-results">

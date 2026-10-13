@@ -1,9 +1,12 @@
 "use client";
+import Link from "next/link";
+import { routes } from "@/lib/routes";
 import { useEffect, useMemo, useState } from "react";
 import { display, fmt } from "@/core/format";
 import type { Candidate, MemberDiff } from "@/core/types";
 import { actor, api, contested, windowLabel, type Concept, type Verification } from "@/lib/client";
 import { CheckSummary, checkSummary, Code, ConfidenceChip, Distribution, LineChart, SERIES, useConfirm } from "./ui";
+import { useSlug } from "./AppShell";
 
 type Payload = { table: string; columns: { name: string; values?: Record<string, number> | string; null_pct?: number; distinct?: number; min?: string; max?: string }[]; rows: number }[];
 const payloadCache = new Map<number, Promise<Payload>>();
@@ -39,6 +42,7 @@ export function ProposalView({ concept, queue, runId, model, back, notify, onCer
   notify: (t: string, e?: boolean) => void; onCertified: (key: string) => void; onChanged: () => void;
 }) {
   const [ask, confirmDialog] = useConfirm();
+  const slug = useSlug();
   const cands = concept.candidates;
   const [idx, setIdx] = useState(() => bestIndex(cands));
   const cand = cands[idx];
@@ -125,9 +129,9 @@ export function ProposalView({ concept, queue, runId, model, back, notify, onCer
       <nav className="rail" aria-label="Review queue">
         <div className="rail-inner">
           {needs.length > 0 && <h4>Needs you · {needs.length}</h4>}
-          {needs.map((c) => <a key={c.id} href={`#p/${c.id}`} className={c.id === concept.id ? "on" : ""}>{c.name}</a>)}
+          {needs.map((c) => <Link key={c.id} href={routes.proposal(slug, c.id)} className={c.id === concept.id ? "on" : ""}>{c.name}</Link>)}
           {looks.length > 0 && <h4>Looks right · {looks.length}</h4>}
-          {looks.map((c) => <a key={c.id} href={`#p/${c.id}`} className={c.id === concept.id ? "on" : ""}>{c.name}</a>)}
+          {looks.map((c) => <Link key={c.id} href={routes.proposal(slug, c.id)} className={c.id === concept.id ? "on" : ""}>{c.name}</Link>)}
         </div>
       </nav>
 

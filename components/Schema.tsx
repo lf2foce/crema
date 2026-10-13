@@ -1,4 +1,7 @@
 "use client";
+import Link from "next/link";
+import { routes } from "@/lib/routes";
+import { useSlug } from "./AppShell";
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as RPointerEvent } from "react";
 import { fmt } from "@/core/format";
 import type { EntityReading, Table, TableProfile } from "@/core/types";
@@ -250,6 +253,7 @@ function TableCard({ t, all, p, expanded, meaning, uses, state, onDown, onHover,
 }
 
 function Inspector({ t, data, centreOn }: { t: Table; data: SchemaMap; centreOn: (id: string) => void }) {
+  const slug = useSlug();
   const entity = data.entities.find((e) => e.table === t.qualified);
   const profile = data.profiles.find((p) => p.table === t.qualified);
   const uses = data.usage[t.qualified] ?? [];
@@ -265,7 +269,7 @@ function Inspector({ t, data, centreOn }: { t: Table; data: SchemaMap; centreOn:
         {uses.length ? (
           <ul className="schema-list">
             {uses.map((u) => (
-              <li key={u.kind + u.ref}><a href={u.kind === "metric" ? `#m/${encodeURIComponent(u.ref)}` : `#p/${u.ref}`}>{u.name}</a>
+              <li key={u.kind + u.ref}><Link href={u.kind === "metric" ? routes.metric(slug, u.ref) : routes.proposal(slug, Number(u.ref))}>{u.name}</Link>
                 <span className={u.kind === "metric" ? "ok" : "warn"}>{u.kind === "metric" ? "certified" : u.contested ? "needs you" : "proposal"}</span></li>
             ))}
           </ul>

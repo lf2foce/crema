@@ -66,9 +66,9 @@ test("set up → connect → discover → review → certify → reuse", async (
   expect(values.points.at(-1).partial).toBe(true);
 
   // the schema map shows every table and what reads it
-  const sourcePath = new URL(page.url()).pathname; // /s/<database>
-  expect(sourcePath).toMatch(/^\/s\//);
-  await page.goto(`${sourcePath}#schema`);
+  const slug = new URL(page.url()).pathname.split("/")[2]; // /projects/<database>/metrics/<metric>
+  expect(new URL(page.url()).pathname).toMatch(/^\/projects\/[^/]+\/metrics\/[^/]+$/);
+  await page.goto(`/projects/${slug}/schema`);
   await expect(page.getByRole("button", { name: "accounts table" })).toBeVisible();
   await page.getByRole("button", { name: "subscriptions table" }).click();
   await expect(page.getByRole("heading", { name: "Read by" })).toBeVisible();
@@ -80,7 +80,7 @@ test("set up → connect → discover → review → certify → reuse", async (
   await expect(page.getByText(/\d+ rows? · \d+ ms/)).toBeVisible();
   await page.getByLabel("SQL").fill("delete from public.plans");
   await page.getByRole("button", { name: "Run" }).click();
-  await expect(page.getByText(/must start with SELECT or WITH/)).toBeVisible();
+  await expect(page.getByText(/must be a single statement: SELECT or WITH/)).toBeVisible();
 
   await page.screenshot({ path: "e2e/last-run.png" });
   expect(errors).toEqual([]);
