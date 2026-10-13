@@ -29,7 +29,9 @@ pnpm dev                         # migrate, then web + worker; http://localhost:
 The first person to open it creates the admin account; after that Crema is invite-only (admins add people under their name in the status bar). Email + password, or Google for invited emails when `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` are set.
 
 Docker: copy `.env.docker.example` to `.env.docker.local`, fill the secrets, then
-`docker compose --env-file .env.docker.local up --build -d`.
+`docker compose --env-file .env.docker.local up -d`. It runs the published image
+`ghcr.io/lf2foce/crema` (amd64 and arm64, built from `main` on every push; pin a
+version with `CREMA_IMAGE_TAG`), or add `--build` to build from your checkout.
 See [deployment instructions](docs/deployment.md) for lifecycle, migrations and Dokploy.
 
 Each database you connect (or create) is a **source** in the workspace: it has its own schema map, tables, SQL editor, proposals and certified metrics, at `/projects/<source>/…` (`/metrics`, `/schema`, `/tables`, `/sql`). A metric always runs on the source it was certified on. Add more from **databases** in the status bar.

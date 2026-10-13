@@ -35,6 +35,9 @@ COPY --from=build --chown=node:node /app/core ./core
 COPY --from=build --chown=node:node /app/bin ./bin
 COPY --from=build --chown=node:node /app/lib ./lib
 COPY --from=build --chown=node:node /app/package.json /app/tsconfig.json /app/next.config.mjs ./
+# the commit this image was built from, reported by /api/version (set by CI)
+ARG CREMA_COMMIT=""
+ENV CREMA_COMMIT=$CREMA_COMMIT
 USER node
 EXPOSE 3300
 CMD ["node", "node_modules/next/dist/bin/next", "start", "--hostname", "0.0.0.0", "--port", "3300"]

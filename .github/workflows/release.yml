@@ -1,0 +1,105 @@
+# Every push to main: check, build the image for amd64 and arm64, publish it to
+# ghcr.io/lf2foce/crema (:latest and :sha-<commit>), then ask the test deployment to pull it.
+# A tag v1.2.3 publishes :1.2.3 and :1.2 too, without deploying. Self-hosters pull the same image.
+name: release
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 10.33.2 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm vitest run test/unit.test.ts
+
+  build:
+    needs: check
+    strategy:
+      matrix:
+        include:
+          - { platform: linux/amd64, runner: ubuntu-24.04 }
+          - { platform: linux/arm64, runner: ubuntu-24.04-arm }
+    runs-on: ${{ matrix.runner }}
+    permissions: { contents: read, packages: write }
+    steps:
+      - id: arch
+        run: echo "name=${PLATFORM#linux/}" >> "$GITHUB_OUTPUT"
+        env: { PLATFORM: "${{ matrix.platform }}" }
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with: { registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}" }
+      - id: build
+        uses: docker/build-push-action@v6
+        with:
+          platforms: ${{ matrix.platform }}
+          build-args: CREMA_COMMIT=${{ github.sha }}
+          labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=${{ steps.arch.outputs.name }}
+          cache-to: type=gha,scope=${{ steps.arch.outputs.name }},mode=max
+      - run: mkdir -p /tmp/digests && touch "/tmp/digests/${DIGEST#sha256:}"
+        env: { DIGEST: "${{ steps.build.outputs.digest }}" }
+      - uses: actions/upload-artifact@v4
+        with: { name: "digest-${{ steps.arch.outputs.name }}", path: /tmp/digests/*, retention-days: 1 }
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions: { contents: read, packages: write }
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { path: /tmp/digests, pattern: digest-*, merge-multiple: true }
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with: { registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}" }
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,prefix=sha-,enable={{is_default_branch}}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+      - working-directory: /tmp/digests
+        run: |
+          docker buildx imagetools create $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf "$IMAGE@sha256:%s " *)
+
+  deploy:
+    needs: publish
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: test
+    steps:
+      # Dokploy's deploy hook for the test instance: it pulls :latest and restarts web and worker
+      - run: |
+          [ -n "$HOOK" ] || { echo "DOKPLOY_DEPLOY_HOOK not set; skipping"; exit 0; }
+          curl -fsS -X POST "$HOOK" -H 'content-type: application/json' -H 'x-github-event: push' \
+            -d '{"ref":"refs/heads/main","commits":[]}'
+        env: { HOOK: "${{ secrets.DOKPLOY_DEPLOY_HOOK }}" }
+      - name: wait for the new version
+        run: |
+          for i in $(seq 1 60); do
+            v=$(curl -fsS https://crema.phenau.com/api/version 2>/dev/null || true)
+            case "$v" in *"$GITHUB_SHA"*) echo "live: $v"; exit 0;; esac
+            sleep 10
+          done
+          echo "crema.phenau.com did not report ${GITHUB_SHA::7} within 10 minutes"; exit 1

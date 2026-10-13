@@ -1,7 +1,11 @@
 name: crema
 
 x-app: &app
-  image: crema:${CREMA_IMAGE_TAG:-local}
+  # the published image (amd64 + arm64): :latest follows main, :sha-<commit> and :<version> are fixed.
+  # `docker compose build` builds it from this checkout instead.
+  image: ${CREMA_IMAGE:-ghcr.io/lf2foce/crema}:${CREMA_IMAGE_TAG:-latest}
+  # always: every `up` fetches the tag again (what the test deployment uses); missing: only once
+  pull_policy: ${CREMA_PULL_POLICY:-missing}
   build: .
   init: true
   cpus: ${CREMA_APP_CPUS:-0.75}

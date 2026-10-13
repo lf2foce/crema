@@ -28,11 +28,16 @@ Requires Docker with Compose v2. The common multi-stage image runs as non-root a
 contains web, worker and migration runtime dependencies. Secrets and local env
 files are excluded from its build context; supply keys only at runtime.
 
+CI (`.github/workflows/release.yml`) publishes it to `ghcr.io/lf2foce/crema` for
+amd64 and arm64 on every push to `main` (`:latest`, `:sha-<commit>`) and for each
+`v*` tag (`:1.2.3`, `:1.2`). Compose uses `:latest` unless `CREMA_IMAGE_TAG` says
+otherwise; `CREMA_IMAGE` points it at a fork's registry. `--build` builds locally.
+
 ```sh
 cp .env.docker.example .env.docker.local
 # Fill each secret separately; openssl rand -hex 32 produces a URL-safe value.
 # Add the model provider key, or leave discovery unavailable until you supply it.
-docker compose --env-file .env.docker.local up --build -d
+docker compose --env-file .env.docker.local up -d
 docker compose --env-file .env.docker.local ps
 docker compose --env-file .env.docker.local logs --tail=100 web worker migrate
 ```
@@ -72,8 +77,8 @@ proper `pg_upgrade` procedure; do not point the 18 image at the 17 data director
 For an upgrade, stop web and worker first, migrate explicitly, then start them:
 
 ```sh
+docker compose --env-file .env.docker.local pull web
 docker compose --env-file .env.docker.local stop web worker
-docker compose --env-file .env.docker.local build
 docker compose --env-file .env.docker.local run --rm migrate
 # Only if migration succeeded:
 docker compose --env-file .env.docker.local up -d web worker
@@ -140,19 +145,22 @@ the deployment and retain the previous image/database backup for recovery.
 Dokploy project **Crema**, Compose service **Crema test** (`phenau-crema-test-f9n3je`),
 tracks `https://github.com/lf2foce/crema.git`, branch `main`, file `./compose.yaml`.
 It has separate state and volume. All services detach from `dokploy-network`;
-only the private Compose network connects them. Auto-deploy is disabled.
+only the private Compose network connects them.
 Runtime secrets are stored through Dokploy's Environment API, never in Git.
 
-The test deployment uses a prebuilt, commit-tagged image and a custom command:
+Deploys are automatic: after CI publishes `:latest`, its `deploy` job calls the
+service's Dokploy deploy hook (GitHub secret `DOKPLOY_DEPLOY_HOOK`, environment
+`test`), then waits until `/api/version` reports the new commit. Dokploy has no
+GitHub webhook of its own, so it never deploys a commit whose image isn't built yet.
+The service's env sets `CREMA_PULL_POLICY=always` and its command is:
 
 ```sh
 compose -p phenau-crema-test-f9n3je --env-file .env -f ./compose.yaml up -d --no-build
 ```
 
-Build each new image explicitly with the dedicated `phenau-crema-build` builder
-(limited to 1 CPU / 2 GB RAM), then set `CREMA_IMAGE_TAG` before deploying.
-A Git push alone does not rebuild the image. For schema upgrades, follow the
-stop/migrate/start procedure above rather than relying on this initial-deploy command.
+Nothing is built on the VPS. To roll back, set `CREMA_IMAGE_TAG=sha-<commit>` in
+Dokploy's environment and redeploy; set it back to `latest` afterwards. For schema
+upgrades, follow the stop/migrate/start procedure above rather than relying on this command.
 
 Access from the Mac without publishing an Internet port:
 
