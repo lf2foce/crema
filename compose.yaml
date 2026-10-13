@@ -114,6 +114,12 @@ services:
       start_interval: 2s # healthy within seconds of starting, so a rollout switches over quickly
       retries: 3
     stop_grace_period: 20s
+    labels:
+      # Behind Traefik (Dokploy): a request on a connection the retiring container just closed is
+      # sent again to the new one instead of failing with a 502. Attach "crema-retry@docker" to the
+      # route (Dokploy: domain → middlewares). Ignored without Traefik.
+      - traefik.http.middlewares.crema-retry.retry.attempts=3
+      - traefik.http.middlewares.crema-retry.retry.initialinterval=100ms
 
   worker:
     <<: *app

@@ -146,6 +146,9 @@ docker compose up -d --no-deps worker               # its queue is durable; jobs
 ```
 
 Two web containers can't bind the same host port: set `CREMA_HTTP_PORT` to empty.
+Attach the `crema-retry@docker` middleware (defined by web's labels) to the route:
+when the outdated container exits, a request Traefik had already sent it over a
+kept-alive connection is retried on the new one rather than answered with a 502.
 If migration fails, nothing after it runs and the current version stays up. If the
 new web never becomes healthy, `--wait` fails and the proxy keeps routing to the
 current one; remove the unhealthy container after reading its logs. Postgres is
@@ -170,7 +173,8 @@ Deploys are automatic: after CI publishes `:latest`, its `deploy` job calls the
 service's Dokploy deploy hook (GitHub secret `DOKPLOY_DEPLOY_HOOK`, environment
 `test`), then waits until `/api/version` reports the new commit. Dokploy has no
 GitHub webhook of its own, so it never deploys a commit whose image isn't built yet.
-Its env sets `CREMA_HTTP_PORT=` (empty) and its command is the rollout above, each
+Its env sets `CREMA_HTTP_PORT=` (empty), its domain has the `crema-retry@docker`
+middleware, and its command is the rollout above, each
 step as `docker compose -p phenau-crema-test-f9n3je --env-file .env -f ./compose.yaml …`
 joined with `&&` (Dokploy's command field accepts only chained `docker compose` calls,
 and prefixes the first with `docker`).
