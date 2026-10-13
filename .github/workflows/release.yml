@@ -89,17 +89,19 @@ jobs:
     runs-on: ubuntu-latest
     environment: test
     steps:
-      # Dokploy's deploy hook for the test instance: it pulls :latest and restarts web and worker
-      - run: |
-          [ -n "$HOOK" ] || { echo "DOKPLOY_DEPLOY_HOOK not set; skipping"; exit 0; }
-          curl -fsS -X POST "$HOOK" -H 'content-type: application/json' -H 'x-github-event: push' \
-            -d '{"ref":"refs/heads/main","commits":[]}'
-        env: { HOOK: "${{ secrets.DOKPLOY_DEPLOY_HOOK }}" }
-      - name: wait for the new version
+      # Dokploy's deploy hook for the test instance: it pulls :latest and restarts web and worker,
+      # then this waits until the instance reports the commit it was asked to run.
+      - env:
+          HOOK: ${{ secrets.DOKPLOY_DEPLOY_HOOK }}
+          MESSAGE: ${{ github.event.head_commit.message }}
         run: |
+          if [ -z "$HOOK" ]; then echo "::notice::DOKPLOY_DEPLOY_HOOK not set: published, not deployed"; exit 0; fi
+          jq -n --arg id "$GITHUB_SHA" --arg m "${MESSAGE%%$'\n'*}" '{ref: "refs/heads/main", commits: [], head_commit: {id: $id, message: $m}}' \
+            | curl -fsS -X POST "$HOOK" -H 'content-type: application/json' -H 'x-github-event: push' --data @-
+          echo
           for i in $(seq 1 60); do
             v=$(curl -fsS https://crema.phenau.com/api/version 2>/dev/null || true)
             case "$v" in *"$GITHUB_SHA"*) echo "live: $v"; exit 0;; esac
             sleep 10
           done
-          echo "crema.phenau.com did not report ${GITHUB_SHA::7} within 10 minutes"; exit 1
+          echo "::error::crema.phenau.com did not report $GITHUB_SHA within 10 minutes"; exit 1
