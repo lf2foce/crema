@@ -15,7 +15,7 @@ const json = (v: unknown) => (v === undefined ? null : JSON.stringify(v));
 export const DEFAULT_WORKSPACE = "default";
 
 /** Sealed secrets of a source (core/secret.ts); never part of `Source`. */
-export type SourceSecrets = { connection: string | null; ownerPassword: string | null; readerPassword: string | null };
+export type SourceSecrets = { connection: string | null; ownerPassword: string | null; readerPassword: string | null; provisionToken: string | null };
 
 export class Registry {
   constructor(readonly url?: string, readonly opts: { schema?: string } = {}) {
@@ -88,8 +88,8 @@ export class Registry {
     return r ? this.toSource(r) : null;
   }
   async sourceSecrets(id: number): Promise<SourceSecrets> {
-    const r = (await this.q("SELECT connection, owner_password, reader_password FROM sources WHERE id = $1", [id]))[0];
-    return { connection: r?.connection ?? null, ownerPassword: r?.owner_password ?? null, readerPassword: r?.reader_password ?? null };
+    const r = (await this.q("SELECT connection, owner_password, reader_password, provision_token FROM sources WHERE id = $1", [id]))[0];
+    return { connection: r?.connection ?? null, ownerPassword: r?.owner_password ?? null, readerPassword: r?.reader_password ?? null, provisionToken: r?.provision_token ?? null };
   }
   /** A unique slug in the workspace: `name`, then `name_2`, … */
   async freeSlug(workspaceId: string, base: string): Promise<string> {
@@ -108,8 +108,8 @@ export class Registry {
       return this.toSource(r);
     });
   }
-  async updateSource(id: number, patch: Partial<{ status: Source["status"]; error: string | null; connection: string; readOnly: boolean; writableTables: number; ownerPassword: string; readerPassword: string; name: string }>) {
-    const cols: Record<string, string> = { status: "status", error: "error", connection: "connection", readOnly: "read_only", writableTables: "writable_tables", ownerPassword: "owner_password", readerPassword: "reader_password", name: "name" };
+  async updateSource(id: number, patch: Partial<{ status: Source["status"]; error: string | null; connection: string; readOnly: boolean; writableTables: number; ownerPassword: string; readerPassword: string; provisionToken: string; name: string }>) {
+    const cols: Record<string, string> = { status: "status", error: "error", connection: "connection", readOnly: "read_only", writableTables: "writable_tables", ownerPassword: "owner_password", readerPassword: "reader_password", provisionToken: "provision_token", name: "name" };
     const sets: string[] = [], vals: unknown[] = [];
     for (const [k, v] of Object.entries(patch)) { if (v === undefined) continue; vals.push(v); sets.push(`${cols[k]} = $${vals.length}`); }
     if (sets.length) await this.q(`UPDATE sources SET ${sets.join(", ")} WHERE id = $${vals.length + 1}`, [...vals, id]);

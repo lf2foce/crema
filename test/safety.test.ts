@@ -30,6 +30,10 @@ suite("step 1 safety regressions", () => {
       expect(failed.status).toBe("failed");
       await expect(svc.retryHosted(failed.id, "test")).rejects.toThrow(/already exists/);
       expect((await admin.query("SELECT 1 FROM pg_database WHERE datname = $1", [name])).rowCount).toBe(1);
+      // removing the failed record forgets it; the other database of that name stays
+      await svc.removeSource(failed.id, "test");
+      expect((await admin.query("SELECT 1 FROM pg_database WHERE datname = $1", [name])).rowCount).toBe(1);
+      expect(await svc.reg.sources("default")).toEqual([]);
     } finally {
       await admin.query(`DROP DATABASE ${name} WITH (FORCE)`);
       await admin.query(`DROP ROLE IF EXISTS ${createdProvisioner}`);
@@ -57,6 +61,10 @@ suite("step 1 safety regressions", () => {
       const conn = await svc.hostedConnection(source.id, "owner");
       expect(conn).toMatchObject({ host: "db.example.com", port: 6543, ssl: true, user: `${dbName}_owner` });
       expect((await svc.resetHostedPassword(source.id, "test", "reader")).password).not.toBe(conn.password);
+      // a process that died mid-provisioning leaves "provisioning": retry resumes with the stored passwords
+      await svc.reg.updateSource(source.id, { status: "provisioning" });
+      expect(await svc.retryHosted(source.id, "test")).toMatchObject({ status: "ready" });
+      expect((await svc.hostedConnection(source.id, "owner")).password).toBe(conn.password);
       expect((await svc.sources())[0].sizeBytes).toBeGreaterThan(0);
       await expect(svc.removeServer(server.id, "test")).rejects.toThrow(/still has 1 database/);
 

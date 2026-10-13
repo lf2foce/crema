@@ -4,10 +4,11 @@
 //     revise(), which require a named human and re-verify the definition against the live database.
 //   - Everything analytical belongs to one source. A metric runs on the source it was certified on,
 //     never on "whatever is connected", and is not served while its tables have drifted.
+import { randomUUID } from "node:crypto";
 import { compare } from "./compare";
 import { ExploreError, runSql, tableRows } from "./explore";
 import { currentCurrency, display, fmt } from "./format";
-import { Hosting, HostingError, type LoginCheck } from "./hosting";
+import { Hosting, HostingError, password, type LoginCheck } from "./hosting";
 import { modelConfigured, modelName, modelSettings, thinkingLevel, type Usage } from "./model";
 import { propose, repair } from "./propose";
 import { DEFAULT_WORKSPACE, implId, Registry, registry } from "./registry";
@@ -217,30 +218,36 @@ export class Creama {
     return (await this.reg.source(this.scope.workspaceId, source.id))!;
   }
 
-  /** Run provisioning again for a hosted source that failed. */
+  /**
+   * Run provisioning again: after a failure, or when an attempt was interrupted (the process died
+   * while it was "provisioning"). It resumes what that source's earlier attempt created.
+   */
   async retryHosted(id: number, actor: string) {
     const source = await this.reg.source(this.scope.workspaceId, id);
     if (!source || source.kind !== "hosted") throw new CreamaError("Hosted database not found.", 404);
+    if (source.status === "ready") throw new CreamaError("This database is already ready.", 409);
     const h = await this.hostingFor(source.serverId);
-    if (source.status !== "failed") throw new CreamaError("Only a database that failed to provision can be retried.", 409);
     await this.provision(h, source, actor);
     return (await this.reg.source(this.scope.workspaceId, id))!;
   }
 
+  /**
+   * The token and both passwords are stored (sealed) before anything exists on the server, so an
+   * interrupted attempt can be resumed and whatever it created is provably this source's.
+   */
   private async provision(h: Hosting, source: Source, actor: string) {
     const dbName = source.dbName!;
-    await this.reg.updateSource(source.id, { status: "provisioning", error: null });
+    const stored = await this.reg.sourceSecrets(source.id);
+    const open = (v: string | null) => { try { return v ? unseal(v) : ""; } catch { return ""; } };
+    const token = stored.provisionToken ?? randomUUID();
+    const ownerPassword = open(stored.ownerPassword) || password(), readerPassword = open(stored.readerPassword) || password();
+    await this.reg.updateSource(source.id, { status: "provisioning", error: null, provisionToken: token, ownerPassword: seal(ownerPassword), readerPassword: seal(readerPassword) });
     try {
-      const r = await h.create(dbName);
-      await this.reg.updateSource(source.id, {
-        status: "ready", error: null, readOnly: true,
-        connection: seal(h.internalUrl(dbName, r.reader, r.readerPassword)),
-        ownerPassword: seal(r.ownerPassword), readerPassword: seal(r.readerPassword),
-      });
+      const r = await h.create(dbName, { token, ownerPassword, readerPassword });
+      await this.reg.updateSource(source.id, { status: "ready", error: null, readOnly: true, connection: seal(h.internalUrl(dbName, r.reader, readerPassword)) });
     } catch (e) {
       const message = hostingError(e).message;
-      // Hosting.create cleans up only resources this attempt actually created. Never drop by
-      // name here: the error may be a collision with somebody else's existing database.
+      // Hosting.create never adopts what isn't this source's, and cleans up only what this attempt made.
       await this.reg.updateSource(source.id, { status: "failed", error: message });
       await this.ev(actor, "source.provisioning_failed", `source:${source.slug}`, { dbName, error: message }, source);
       throw new CreamaError(`Could not create ${dbName}: ${message}`, 502);
@@ -266,8 +273,10 @@ export class Creama {
     if (!source || source.kind !== "hosted" || !source.dbName) throw new CreamaError("Hosted database not found.", 404);
     const h = await this.hostingFor(source.serverId);
     const login = `${source.dbName}_${role === "owner" ? "owner" : "creama"}`;
+    const { provisionToken } = await this.reg.sourceSecrets(id);
+    if (!provisionToken) throw new CreamaError("Creama can’t prove this database is its own, so it won’t change its logins.", 409);
     let pw: string;
-    try { pw = await h.resetPassword(login); } catch (e) { throw hostingError(e); }
+    try { pw = await h.resetPassword(source.dbName, role === "owner" ? "owner" : "creama", provisionToken); } catch (e) { throw hostingError(e); }
     // the role already has the new password: record it, and Creama's own connection when it's the reader
     try {
       await this.reg.updateSource(id, role === "owner" ? { ownerPassword: seal(pw) } : { readerPassword: seal(pw), connection: seal(h.internalUrl(source.dbName, login, pw)) });
@@ -278,13 +287,20 @@ export class Creama {
     return this.hostedConnection(id, role);
   }
 
-  /** Remove a database from the workspace. A hosted one is dropped with its data; an external one is only forgotten. */
+  /**
+   * Remove a database from the workspace. A hosted one is dropped with its data, but only what
+   * carries this source's token: a failed attempt that collided with somebody else's database of
+   * the same name leaves theirs alone. An external one is only forgotten.
+   */
   async removeSource(id: number, actor: string) {
     const source = await this.reg.source(this.scope.workspaceId, id);
     if (!source) throw new CreamaError("Database not found.", 404);
     if (source.kind === "hosted" && source.dbName) {
-      const h = await this.hostingFor(source.serverId);
-      try { await h.drop(source.dbName); } catch (e) { throw hostingError(e); }
+      const { provisionToken } = await this.reg.sourceSecrets(id);
+      if (provisionToken) {
+        const h = await this.hostingFor(source.serverId);
+        try { await h.drop(source.dbName, provisionToken); } catch (e) { throw hostingError(e); }
+      }
     }
     await this.reg.removeSource(source, actor);
     tablesCache.delete(source.id);

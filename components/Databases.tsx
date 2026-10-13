@@ -9,12 +9,16 @@ type Role = "owner" | "reader";
 const size = (b: number | null) => (b == null ? "—" : b < 1e6 ? `${Math.max(1, Math.round(b / 1e3))} kB` : b < 1e9 ? `${(b / 1e6).toFixed(1)} MB` : `${(b / 1e9).toFixed(2)} GB`);
 const MASK = "••••••••••••";
 
+// node-postgres reads sslmode=require as verify-full (unlike libpq); the hosting server's certificate
+// is self-signed, so Node snippets ask for libpq's meaning: encrypted, not verified
+const nodeUrl = (u: string) => u.replace("sslmode=require", "sslmode=require&uselibpqcompat=true");
+
 const FORMATS: { id: string; label: string; render: (url: string) => string }[] = [
   { id: "url", label: "Connection string", render: (u) => u },
   { id: "env", label: ".env", render: (u) => `DATABASE_URL="${u}"` },
   { id: "psql", label: "psql", render: (u) => `psql "${u}"` },
-  { id: "node", label: "Node.js", render: (u) => `import pg from "pg";\n\n// DATABASE_URL="${u}"\nconst pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });` },
-  { id: "drizzle", label: "Drizzle", render: (u) => `// .env\nDATABASE_URL="${u}"\n\n// db.ts\nimport { drizzle } from "drizzle-orm/node-postgres";\nexport const db = drizzle(process.env.DATABASE_URL!);\n\n// drizzle.config.ts\nimport { defineConfig } from "drizzle-kit";\nexport default defineConfig({ dialect: "postgresql", schema: "./src/schema.ts", dbCredentials: { url: process.env.DATABASE_URL! } });` },
+  { id: "node", label: "Node.js", render: (u) => `import pg from "pg";\n\n// DATABASE_URL="${nodeUrl(u)}"\nconst pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });` },
+  { id: "drizzle", label: "Drizzle", render: (u) => `// .env\nDATABASE_URL="${nodeUrl(u)}"\n\n// db.ts\nimport { drizzle } from "drizzle-orm/node-postgres";\nexport const db = drizzle(process.env.DATABASE_URL!);\n\n// drizzle.config.ts\nimport { defineConfig } from "drizzle-kit";\nexport default defineConfig({ dialect: "postgresql", schema: "./src/schema.ts", dbCredentials: { url: process.env.DATABASE_URL! } });` },
   { id: "python", label: "Python", render: (u) => `import psycopg\n\n# DATABASE_URL="${u}"\nconn = psycopg.connect(os.environ["DATABASE_URL"])` },
 ];
 
@@ -248,7 +252,7 @@ function Detail({ db, server, admin, notify, onChanged }: { db: SourceInfo; serv
     <div className="hosted-detail">
       <div className="eyebrow">Hosted database</div>
       <h1 className="title">{db.name}</h1>
-      {db.status === "provisioning" && <div className="callout small">Being created…</div>}
+      {db.status === "provisioning" && <div className="callout small row"><span className="grow">Being created…</span>{admin && Date.now() - Date.parse(db.createdAt) > 120_000 && <button className="btn sm" disabled={busy === "retry"} onClick={retry}>Taking long? Retry</button>}</div>}
       {db.status === "failed" && <div className="callout warn small row"><span className="grow">Creating it failed: {db.error}</span>{admin && <button className="btn sm" disabled={busy === "retry"} onClick={retry}>Retry</button>}</div>}
       <div className="hosted-stats">
         <div><span>Database</span><b className="mono">{db.dbName}</b><small>on {server?.name ?? "a removed server"}</small></div>
@@ -280,6 +284,7 @@ function Detail({ db, server, admin, notify, onChanged }: { db: SourceInfo; serv
             </div>
           </>
         )}
+        {conn?.ssl && (format === "url" || format === "env") && <p className="use-note m-0">Node.js (pg, Drizzle): add <span className="mono">&amp;uselibpqcompat=true</span>, as in the Node.js tab. The server’s certificate is self-signed: the connection is encrypted, not verified.</p>}
         {role === "reader" && <p className="use-note m-0">Read-only: this login can’t change anything, including tables your app creates later.</p>}
       </section>}
 

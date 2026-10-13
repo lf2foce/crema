@@ -13,7 +13,7 @@ import { quoteIdent } from "./warehouse";
 export class HostingError extends Error {}
 
 const NAME = /^[a-z][a-z0-9_]{1,38}$/; // what we interpolate into DDL: nothing else ever is
-const password = () => randomBytes(24).toString("base64url"); // 32 chars, URL-safe, no quoting needed
+export const password = () => randomBytes(24).toString("base64url"); // 32 chars, URL-safe, no quoting needed
 const literal = (s: string) => `'${s.replace(/'/g, "''")}'`;
 const MIN_VERSION = 160000; // CREATEROLE scoped to the roles it created
 
@@ -106,30 +106,65 @@ export class Hosting {
     return connect(this.adminUrl, fn, database);
   }
 
-  /** Creates the database and both roles. Returns the owner's password, the only time it exists in plain text. */
-  async create(dbName: string): Promise<{ owner: string; reader: string; ownerPassword: string; readerPassword: string }> {
+  /**
+   * Is each name free, or Creama's from an earlier attempt with this token? Ours means: the
+   * provisioner created the role (PostgreSQL 16+ records an ADMIN OPTION grant to its creator) and
+   * the role's (or database's) comment is this source's token. Anything else is somebody else's.
+   */
+  private async ownership(c: pg.Client, dbName: string, token: string) {
+    const q = await c.query<{ name: string; kind: string; exists: boolean; ours: boolean }>(`
+      WITH me AS (SELECT oid FROM pg_roles WHERE rolname = current_user),
+      roles AS (
+        SELECT n AS name, 'role' AS kind, r.oid IS NOT NULL AS exists,
+               COALESCE(shobj_description(r.oid, 'pg_authid') = $3
+                 AND EXISTS (SELECT 1 FROM pg_auth_members m, me WHERE m.roleid = r.oid AND m.member = me.oid AND m.admin_option), false) AS ours
+        FROM unnest($2::text[]) AS n LEFT JOIN pg_roles r ON r.rolname = n)
+      SELECT * FROM roles
+      UNION ALL
+      SELECT $1, 'database', d.oid IS NOT NULL,
+             COALESCE(shobj_description(d.oid, 'pg_database') = $3 AND pg_get_userbyid(d.datdba) = $4, false)
+      FROM (SELECT 1) one LEFT JOIN pg_database d ON d.datname = $1`,
+      [dbName, [`${dbName}_owner`, `${dbName}_creama`], token, `${dbName}_owner`]);
+    const by = (name: string) => q.rows.find((r) => r.name === name)!;
+    return { owner: by(`${dbName}_owner`), reader: by(`${dbName}_creama`), database: by(dbName) };
+  }
+
+  /**
+   * Creates the database and both roles with the given passwords, or finishes an earlier attempt
+   * that carried the same token (a crash part-way can be retried). Never adopts anything else.
+   */
+  async create(dbName: string, p: { token: string; ownerPassword: string; readerPassword: string }): Promise<{ owner: string; reader: string }> {
     if (!NAME.test(dbName)) throw new HostingError(`Invalid database name “${dbName}”.`);
-    const owner = `${dbName}_owner`, reader = `${dbName}_creama`;
-    const ownerPw = password(), readerPw = password();
+    if (!/^[0-9a-f-]{36}$/.test(p.token)) throw new HostingError("Invalid provisioning token.");
+    const owner = `${dbName}_owner`, reader = `${dbName}_creama`, mark = literal(p.token);
     await this.admin(async (c) => {
-      // Serialize Creama provisioning for this name. A name collision is not ownership.
+      // Serialize Creama provisioning for this name: a retry waits for (or follows) a running attempt.
       await c.query("SELECT pg_advisory_lock(hashtext($1))", [`creama.hosting:${dbName}`]);
       // PostgreSQL 16+: be able to act as the roles we create (own the database, set default privileges)
       await c.query("SET createrole_self_grant = 'set, inherit'");
       let madeOwner = false, madeReader = false, madeDatabase = false;
       try {
-        const exists = await c.query("SELECT 1 FROM pg_database WHERE datname = $1 UNION ALL SELECT 1 FROM pg_roles WHERE rolname = ANY($2)", [dbName, [owner, reader]]);
-        if (exists.rowCount) throw new HostingError(`A database or role named “${dbName}” already exists.`);
-        // roles: no superuser, can't make roles or databases, capped connections
-        await c.query(`CREATE ROLE ${quoteIdent(owner)} LOGIN PASSWORD ${literal(ownerPw)} NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS CONNECTION LIMIT 20`);
-        madeOwner = true;
-        await c.query(`CREATE ROLE ${quoteIdent(reader)} LOGIN PASSWORD ${literal(readerPw)} NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS CONNECTION LIMIT 5`);
-        madeReader = true;
+        const own = await this.ownership(c, dbName, p.token);
+        if ([own.owner, own.reader, own.database].some((x) => x.exists && !x.ours)) throw new HostingError(`A database or role named “${dbName}” already exists.`);
+        // roles: no superuser, can't make roles or databases, capped connections; marked as this source's
+        const role = async (name: string, pw: string, limit: number, exists: boolean) => {
+          // resuming: set the stored password again (the rest was fixed at creation; a non-superuser
+          // can't raise those attributes and may not even restate them)
+          await c.query(exists
+            ? `ALTER ROLE ${quoteIdent(name)} LOGIN PASSWORD ${literal(pw)} CONNECTION LIMIT ${limit}`
+            : `CREATE ROLE ${quoteIdent(name)} LOGIN PASSWORD ${literal(pw)} NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS CONNECTION LIMIT ${limit}`);
+          if (!exists) await c.query(`COMMENT ON ROLE ${quoteIdent(name)} IS ${mark}`);
+        };
+        await role(owner, p.ownerPassword, 20, own.owner.exists); madeOwner = !own.owner.exists;
+        await role(reader, p.readerPassword, 5, own.reader.exists); madeReader = !own.reader.exists;
         await c.query(`ALTER ROLE ${quoteIdent(reader)} SET default_transaction_read_only = on`);
         await c.query(`ALTER ROLE ${quoteIdent(owner)} SET idle_in_transaction_session_timeout = '10min'`);
         // CREATE DATABASE can't run inside a transaction; a failure past this point is cleaned up below
-        await c.query(`CREATE DATABASE ${quoteIdent(dbName)} OWNER ${quoteIdent(owner)}`);
-        madeDatabase = true;
+        if (!own.database.exists) {
+          await c.query(`CREATE DATABASE ${quoteIdent(dbName)} OWNER ${quoteIdent(owner)}`);
+          madeDatabase = true;
+          await c.query(`COMMENT ON DATABASE ${quoteIdent(dbName)} IS ${mark}`);
+        }
         // only its own roles may connect: hosted databases can't see each other
         await c.query(`REVOKE ALL ON DATABASE ${quoteIdent(dbName)} FROM PUBLIC`);
         await c.query(`GRANT CONNECT ON DATABASE ${quoteIdent(dbName)} TO ${quoteIdent(reader)}`);
@@ -151,29 +186,45 @@ export class Hosting {
         if (madeDatabase) await cleanup(`DROP DATABASE IF EXISTS ${quoteIdent(dbName)} WITH (FORCE)`);
         if (madeReader) await cleanup(`DROP ROLE IF EXISTS ${quoteIdent(reader)}`);
         if (madeOwner) await cleanup(`DROP ROLE IF EXISTS ${quoteIdent(owner)}`);
-        if (cleanupErrors.length) throw new HostingError(`${(e as Error).message}; cleanup incomplete: ${cleanupErrors.join("; ")}. Inspect leftovers before retrying.`);
+        if (cleanupErrors.length) throw new HostingError(`${(e as Error).message}; cleanup incomplete: ${cleanupErrors.join("; ")}. Retrying resumes it.`);
         throw e;
       } finally {
         await c.query("SELECT pg_advisory_unlock(hashtext($1))", [`creama.hosting:${dbName}`]).catch(() => {});
       }
     });
-    return { owner, reader, ownerPassword: ownerPw, readerPassword: readerPw };
+    return { owner, reader };
   }
 
-  /** New password for one of a hosted database's roles; the old one stops working immediately. */
-  async resetPassword(role: string): Promise<string> {
-    if (!NAME.test(role.replace(/_(owner|creama)$/, "")) || !/_(owner|creama)$/.test(role)) throw new HostingError("Not a hosted database role.");
-    const pw = password();
-    await this.admin((c) => c.query(`ALTER ROLE ${quoteIdent(role)} PASSWORD ${literal(pw)}`));
+  /** New password for one of this source's roles; the old one stops working immediately. */
+  async resetPassword(dbName: string, which: "owner" | "creama", token: string): Promise<string> {
+    if (!NAME.test(dbName)) throw new HostingError(`Invalid database name “${dbName}”.`);
+    const role = `${dbName}_${which}`, pw = password();
+    await this.admin(async (c) => {
+      const own = await this.ownership(c, dbName, token);
+      if (!(which === "owner" ? own.owner : own.reader).ours) throw new HostingError(`${role} isn’t one Creama created for this database.`);
+      await c.query(`ALTER ROLE ${quoteIdent(role)} PASSWORD ${literal(pw)}`);
+    });
     return pw;
   }
 
-  async drop(dbName: string) {
+  /** Drops this source's database and roles: only those carrying its token, nothing else of that name. */
+  async drop(dbName: string, token: string): Promise<{ dropped: string[]; left: string[] }> {
     if (!NAME.test(dbName)) throw new HostingError(`Invalid database name “${dbName}”.`);
-    await this.admin(async (c) => {
-      await c.query(`DROP DATABASE IF EXISTS ${quoteIdent(dbName)} WITH (FORCE)`);
-      await c.query(`DROP ROLE IF EXISTS ${quoteIdent(`${dbName}_owner`)}`);
-      await c.query(`DROP ROLE IF EXISTS ${quoteIdent(`${dbName}_creama`)}`);
+    return this.admin(async (c) => {
+      await c.query("SELECT pg_advisory_lock(hashtext($1))", [`creama.hosting:${dbName}`]);
+      try {
+        const own = await this.ownership(c, dbName, token);
+        const dropped: string[] = [], left: string[] = [];
+        for (const x of [own.database, own.reader, own.owner]) {
+          if (!x.exists) continue;
+          if (!x.ours) { left.push(x.name); continue; }
+          await c.query(x.kind === "database" ? `DROP DATABASE IF EXISTS ${quoteIdent(x.name)} WITH (FORCE)` : `DROP ROLE IF EXISTS ${quoteIdent(x.name)}`);
+          dropped.push(x.name);
+        }
+        return { dropped, left };
+      } finally {
+        await c.query("SELECT pg_advisory_unlock(hashtext($1))", [`creama.hosting:${dbName}`]).catch(() => {});
+      }
     });
   }
 
