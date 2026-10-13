@@ -3,11 +3,13 @@ import { useCallback, useEffect, useState } from "react";
 import { MIN_PASSWORD_LENGTH } from "@/lib/password";
 import { ago, type Me } from "@/lib/client";
 import { authClient } from "@/lib/authClient";
+import { useConfirm } from "./ui";
 
 type U = { id: string; name: string; email: string; role?: string | null; createdAt: string | Date; banned?: boolean | null };
 
 /** Admin only: who can sign in. Crema is invite-only after the first account. */
 export function People({ me, notify }: { me: Me; notify: (t: string, e?: boolean) => void }) {
+  const [ask, confirmDialog] = useConfirm();
   const [users, setUsers] = useState<U[] | null>(null);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -37,7 +39,7 @@ export function People({ me, notify }: { me: Me; notify: (t: string, e?: boolean
     load();
   };
   const remove = async (u: U) => {
-    if (!window.confirm(`Remove ${u.email}? They can no longer sign in. What they certified stays, with their name.`)) return;
+    if (!(await ask({ title: `Remove ${u.email}?`, body: "They can no longer sign in. What they certified stays, with their name.", confirmLabel: "Remove person", danger: true })).ok) return;
     const res = await authClient.admin.removeUser({ userId: u.id });
     if (res.error) notify(res.error.message ?? "Could not remove.", true); else load();
   };
@@ -80,6 +82,7 @@ export function People({ me, notify }: { me: Me; notify: (t: string, e?: boolean
         ))}
         {!users && <div className="pad"><span className="spin" /></div>}
       </div>
+      {confirmDialog}
     </div>
   );
 }

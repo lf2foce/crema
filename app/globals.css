@@ -70,7 +70,8 @@
   --radius: 8px;
   --radius-card: 10px;
   --gutter: 24px;
-  --chrome-h: 78px; /* status bar 37 + database tabs 41 */
+  --bar-h: 37px; /* status bar */
+  --chrome-h: calc(var(--bar-h) + 41px); /* status bar + database tabs: pages inside one database */
   color-scheme: light;
 }
 
@@ -142,6 +143,11 @@ code, pre, .mono { font-family: var(--mono); font-size: var(--fs-small); }
 }
 .btn:hover { background: var(--hover); text-decoration: none; color: var(--text); }
 .btn:disabled { opacity: 0.5; cursor: default; }
+.btn.danger-solid { background: var(--fail); border-color: var(--fail); color: #fff; }
+.btn.danger-solid:hover:not(:disabled) { filter: brightness(0.92); }
+.modal:has(.confirm) { width: min(520px, 100%); }
+.confirm-type { display: flex; align-items: center; gap: var(--sp-3); padding: var(--sp-2) var(--sp-3); border: 1px dashed var(--border); border-radius: 6px; background: var(--subtle); font-size: var(--fs-small); color: var(--muted); }
+.confirm-type code { flex: 1; min-width: 0; overflow-wrap: anywhere; color: var(--text); font-size: var(--fs-ui); }
 .btn.primary, .btn.ok { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
 .btn.primary:hover, .btn.ok:hover:not(:disabled) { background: var(--accent-hover); border-color: var(--accent-hover); color: var(--accent-text); }
 .btn.ghost { border-color: transparent; background: transparent; color: var(--muted); }
@@ -621,7 +627,7 @@ table.plain td.mono { font-size: var(--fs-ui); }
 .cell-view pre { flex: 1; margin: 0; overflow: auto; max-height: 140px; font: var(--fs-small)/1.5 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
 .cell-view .copy { position: static; }
 
-.hostedpage { display: grid; grid-template-columns: 240px minmax(0, 1fr); height: calc(100vh - var(--chrome-h)); }
+.hostedpage { display: grid; grid-template-columns: 240px minmax(0, 1fr); height: calc(100vh - var(--bar-h)); } /* a workspace page: no database tabs */
 .hosted-main { overflow-y: auto; min-width: 0; }
 .hosted-empty { max-width: 640px; margin: 0 auto; padding: var(--sp-16) var(--sp-6); }
 .hosted-detail { max-width: 860px; margin: 0 auto; padding: var(--sp-8) var(--sp-8) var(--sp-12); display: grid; gap: var(--sp-5); }

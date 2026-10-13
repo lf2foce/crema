@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import type { Check, Confidence, MetricUnit, SeriesPoint } from "@/core/types";
 import { display } from "@/core/format";
 
@@ -215,4 +215,49 @@ export function Modal({ onClose, children }: { onClose: () => void; children: Re
       <div className="modal card pad" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal>{children}</div>
     </div>
   );
+}
+
+// ---------- confirmation ----------
+
+export type ConfirmOptions = {
+  title: string;
+  body?: ReactNode;
+  confirmLabel?: string;
+  /** destructive: the confirm button is red */
+  danger?: boolean;
+  /** the exact text that must be typed to confirm (shown, copyable) */
+  type?: string;
+  /** ask for a reason (optional) and return it */
+  reason?: { label: string; placeholder?: string };
+};
+export type ConfirmResult = { ok: boolean; reason: string };
+
+/** Replaces window.confirm/prompt: says what will happen, shows the text to type, enables the button when it matches. */
+export function ConfirmDialog({ opts, onDone }: { opts: ConfirmOptions; onDone: (r: ConfirmResult) => void }) {
+  const [typed, setTyped] = useState("");
+  const [reason, setReason] = useState("");
+  const ready = !opts.type || typed === opts.type;
+  const submit = (e: React.FormEvent) => { e.preventDefault(); if (ready) onDone({ ok: true, reason: reason.trim() }); };
+  return (
+    <Modal onClose={() => onDone({ ok: false, reason: "" })}>
+      <form className="stack confirm" onSubmit={submit}>
+        <h2 className="schema-h m-0">{opts.title}</h2>
+        {opts.body && <div className="muted">{opts.body}</div>}
+        {opts.type && <>
+          <div className="confirm-type"><span>Type this to confirm</span><code className="mono">{opts.type}</code><Copy text={opts.type} /></div>
+          <input className="input mono" autoFocus value={typed} onChange={(e) => setTyped(e.target.value)} spellCheck={false} autoComplete="off" aria-label={`Type ${opts.type} to confirm`} placeholder={opts.type} />
+        </>}
+        {opts.reason && <label className="field">{opts.reason.label}<textarea className="input" rows={2} autoFocus={!opts.type} value={reason} onChange={(e) => setReason(e.target.value)} placeholder={opts.reason.placeholder} /></label>}
+        <div className="row"><span className="grow" /><button type="button" className="btn" onClick={() => onDone({ ok: false, reason: "" })}>Cancel</button><button className={`btn ${opts.danger ? "danger-solid" : "primary"}`} disabled={!ready} autoFocus={!opts.type && !opts.reason}>{opts.confirmLabel ?? "Confirm"}</button></div>
+      </form>
+    </Modal>
+  );
+}
+
+/** `const [ask, dialog] = useConfirm()`; render `{dialog}`; `if (!(await ask({...})).ok) return;` */
+export function useConfirm() {
+  const [req, setReq] = useState<{ opts: ConfirmOptions; resolve: (r: ConfirmResult) => void } | null>(null);
+  const ask = useCallback((opts: ConfirmOptions) => new Promise<ConfirmResult>((resolve) => setReq({ opts, resolve })), []);
+  const dialog = req ? <ConfirmDialog opts={req.opts} onDone={(r) => { req.resolve(r); setReq(null); }} /> : null;
+  return [ask, dialog] as const;
 }

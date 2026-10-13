@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { display, fmt } from "@/core/format";
 import type { Candidate, MemberDiff } from "@/core/types";
 import { actor, api, contested, windowLabel, type Concept, type Verification } from "@/lib/client";
-import { CheckSummary, checkSummary, Code, ConfidenceChip, Distribution, LineChart, SERIES } from "./ui";
+import { CheckSummary, checkSummary, Code, ConfidenceChip, Distribution, LineChart, SERIES, useConfirm } from "./ui";
 
 type Payload = { table: string; columns: { name: string; values?: Record<string, number> | string; null_pct?: number; distinct?: number; min?: string; max?: string }[]; rows: number }[];
 const payloadCache = new Map<number, Promise<Payload>>();
@@ -38,6 +38,7 @@ export function ProposalView({ concept, queue, runId, model, back, notify, onCer
   concept: Concept; queue: Concept[]; runId: number; model: string; back: () => void;
   notify: (t: string, e?: boolean) => void; onCertified: (key: string) => void; onChanged: () => void;
 }) {
+  const [ask, confirmDialog] = useConfirm();
   const cands = concept.candidates;
   const [idx, setIdx] = useState(() => bestIndex(cands));
   const cand = cands[idx];
@@ -101,8 +102,9 @@ export function ProposalView({ concept, queue, runId, model, back, notify, onCer
   };
 
   const doDismiss = async () => {
-    const reason = window.prompt("Why isn’t this a metric you need? (optional, goes into the audit log)") ?? undefined;
-    if (reason === undefined) return;
+    const answer = await ask({ title: `Reject ${concept.name}?`, body: "It moves to rejected; you can reopen it later.", reason: { label: "Why isn’t this a metric you need? (optional, goes into the audit log)" }, confirmLabel: "Reject", danger: true });
+    if (!answer.ok) return;
+    const reason = answer.reason;
     try { await api(`/api/proposals/${concept.id}/reject`, { body: { reason } }); notify(`Rejected ${concept.name}.`); onChanged(); }
     catch (e) { notify((e as Error).message, true); }
   };
@@ -270,6 +272,7 @@ export function ProposalView({ concept, queue, runId, model, back, notify, onCer
           </div>
         </div>
       </aside>
+      {confirmDialog}
     </div>
   );
 }

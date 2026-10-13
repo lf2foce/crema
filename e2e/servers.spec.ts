@@ -102,9 +102,22 @@ test("add a server → create a database → connect → delete → remove the s
   await page.getByRole("button", { name: /^E2E Shop/ }).click();
   await expect(page.getByText("Delete its branches first (dev).")).toBeVisible();
   await page.getByRole("button", { name: /^↳ dev/ }).click();
-  page.once("dialog", (d) => d.accept(`${DB}_dev`));
   await page.getByRole("button", { name: "Delete", exact: true }).click();
+  // the dialog shows exactly what to type; the button stays off until it matches
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.getByText("Type this to confirm")).toBeVisible();
+  await expect(dialog.locator("code")).toHaveText(`${DB}_dev`);
+  const confirmBtn = dialog.getByRole("button", { name: "Delete branch" });
+  await expect(confirmBtn).toBeDisabled();
+  await dialog.getByLabel(`Type ${DB}_dev to confirm`).fill(`${DB}_de`);
+  await expect(confirmBtn).toBeDisabled();
+  await dialog.getByLabel(`Type ${DB}_dev to confirm`).fill(`${DB}_dev`);
+  await confirmBtn.click();
   await expect(page.getByText(`Deleted ${DB}_dev.`)).toBeVisible();
+
+  // the page fills the window: no white strip under it
+  const gap = await page.evaluate(() => window.innerHeight - document.querySelector(".hostedpage")!.getBoundingClientRect().bottom);
+  expect(Math.abs(gap)).toBeLessThanOrEqual(1);
 
   // a server with databases can't be removed
   await page.getByRole("button", { name: /^db\.example\.com/ }).click();
@@ -112,14 +125,15 @@ test("add a server → create a database → connect → delete → remove the s
 
   // delete the database (typed confirmation), then the server
   await page.getByRole("button", { name: /^E2E Shop/ }).click();
-  page.once("dialog", (d) => d.accept(DB));
   await page.getByRole("button", { name: "Delete", exact: true }).click();
+  await page.getByRole("dialog").getByLabel(`Type ${DB} to confirm`).fill(DB);
+  await page.getByRole("dialog").getByRole("button", { name: "Delete database" }).click();
   await expect(page.getByText(`Deleted ${DB}.`)).toBeVisible();
   expect(psql(`SELECT count(*) FROM pg_database WHERE datname = '${DB}'`)).toBe("0");
 
   await page.getByRole("button", { name: /^db\.example\.com/ }).click();
-  page.once("dialog", (d) => d.accept());
   await page.getByRole("button", { name: "Remove" }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Remove server" }).click();
   await expect(page.getByText(`Its login ${provisioner} is still on the server`)).toBeVisible();
   await expect(page.getByRole("button", { name: /^db\.example\.com/ })).toHaveCount(0);
 

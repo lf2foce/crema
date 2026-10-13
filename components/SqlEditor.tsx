@@ -1,4 +1,5 @@
 "use client";
+import { useConfirm } from "./ui";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { SavedQuery, Table } from "@/core/types";
 import { actor, ago, api, type AppState } from "@/lib/client";
@@ -17,6 +18,7 @@ const BLANK: Doc = { id: null, name: "Untitled query", sql: "SELECT *\nFROM publ
 const short = (q: string) => q.replace(/^public\./, "");
 
 export function SqlEditor({ state, notify }: { state: AppState; notify: (t: string, e?: boolean) => void }) {
+  const [ask, confirmDialog] = useConfirm();
   const [saved, setSaved] = useState<SavedQuery[]>([]);
   const [tables, setTables] = useState<Table[]>([]);
   const [doc, setDoc] = useState<Doc>(BLANK);
@@ -61,13 +63,13 @@ export function SqlEditor({ state, notify }: { state: AppState; notify: (t: stri
       notify(`Saved “${q.name}”.`);
     } catch (e) { notify((e as Error).message, true); }
   };
-  const open = (d: Doc, saved = true) => {
-    if (dirty && doc.sql.trim() && !window.confirm("Discard unsaved changes to this query?")) return;
+  const open = async (d: Doc, saved = true) => {
+    if (dirty && doc.sql.trim() && !(await ask({ title: "Discard unsaved changes?", body: "The query you’re editing hasn’t been saved.", confirmLabel: "Discard", danger: true })).ok) return;
     setDoc(d); setBase(saved ? d : null); setResult(null); setError(null);
     requestAnimationFrame(() => area.current?.focus());
   };
   const remove = async (q: SavedQuery) => {
-    if (!window.confirm(`Delete “${q.name}”?`)) return;
+    if (!(await ask({ title: `Delete “${q.name}”?`, body: "This saved query is removed for everyone.", confirmLabel: "Delete query", danger: true })).ok) return;
     try { await api(`/api/queries/${q.id}`, { method: "DELETE" }); if (doc.id === q.id) { setDoc({ ...doc, id: null }); setBase(null); } loadSaved(); }
     catch (e) { notify((e as Error).message, true); }
   };
@@ -175,6 +177,7 @@ export function SqlEditor({ state, notify }: { state: AppState; notify: (t: stri
           {error ? <pre className="sql-error">{error}</pre> : result ? <DataGrid columns={result.columns} rows={result.rows} empty="The query returned no rows." /> : null}
         </div>
       </main>
+      {confirmDialog}
     </div>
   );
 }

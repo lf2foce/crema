@@ -3,7 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import { display } from "@/core/format";
 import type { MetricKind, MetricUnit, SeriesPoint } from "@/core/types";
 import { actor, ago, api, windowLabel, type AuditEvent, type Verification, sourceHref, type Source } from "@/lib/client";
-import { Checks, Code, LineChart } from "./ui";
+import { Checks, Code, LineChart, useConfirm } from "./ui";
 
 type Contract = {
   key: string; name: string; question: string; description: string; kind: MetricKind; unit: MetricUnit; version: number;
@@ -16,6 +16,7 @@ type Contract = {
 type Values = { version: number; points?: SeriesPoint[]; value?: number | null; unit: MetricUnit };
 
 export function MetricView({ source, metricKey, back, notify, reload, cwd, tokenRequired }: { source: Source; metricKey: string; back: () => void; notify: (t: string, e?: boolean) => void; reload: () => void; cwd: string; tokenRequired: boolean }) {
+  const [ask, confirmDialog] = useConfirm();
   const ref = `${encodeURIComponent(source.slug)}/${encodeURIComponent(metricKey)}`;
   const [m, setM] = useState<Contract | null>(null);
   const [grain, setGrain] = useState<"week" | "month" | "quarter">("month");
@@ -110,8 +111,9 @@ export function MetricView({ source, metricKey, back, notify, reload, cwd, token
               </ul>
             </details>
             <button className="linkish danger" onClick={async () => {
-              const reason = window.prompt(`Deprecate ${m.name}? Consumers will stop receiving it. Reason:`);
-              if (reason === null) return;
+              const answer = await ask({ title: `Deprecate ${m.name}?`, body: "Consumers (API, MCP) stop receiving it. Its history stays.", reason: { label: "Reason (goes into the audit log)" }, confirmLabel: "Deprecate", danger: true });
+              if (!answer.ok) return;
+              const reason = answer.reason;
               try { await api(`/api/metrics/${m.key}/deprecate`, { body: { reason } }); notify(`Deprecated ${m.name}.`); reload(); back(); } catch (e) { notify((e as Error).message, true); }
             }}>Deprecate</button>
           </div>
@@ -157,6 +159,7 @@ export function MetricView({ source, metricKey, back, notify, reload, cwd, token
         </>}
         <div className="served-note">Only certified metrics are served. Drafts don’t exist to the API, MCP or CLI: consumers get this number or nothing, never a guess.</div>
       </aside>
+      {confirmDialog}
     </div>
   );
 }

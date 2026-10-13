@@ -1,7 +1,7 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
 import { ago, api, sourceHref, type AppState, type ServerInfo, type SourceInfo } from "@/lib/client";
-import { Copy, Modal } from "./ui";
+import { Copy, Modal, useConfirm } from "./ui";
 import { DB_NAME_MAX, dbNameProblem, naturalDbName } from "@/lib/dbName";
 
 type Conn = { host: string; port: number; database: string; user: string; password: string; ssl: boolean; connectionString: string };
@@ -183,8 +183,9 @@ function ServerDetail({ server, notify, onChanged }: { server: ServerInfo; notif
   const [check, setCheck] = useState<{ ok: boolean; reason: string | null; version: string | null } | null>(null);
   const [busy, setBusy] = useState(false);
   useEffect(() => { api(`/api/servers/${server.id}/check`, { source: null }).then(setCheck).catch((e) => setCheck({ ok: false, reason: (e as Error).message, version: null })); }, [server.id]);
+  const [ask, confirmDialog] = useConfirm();
   const remove = async () => {
-    if (!window.confirm(`Remove ${server.name} from Crema? Only possible once it holds no databases. Nothing on the server is deleted.`)) return;
+    if (!(await ask({ title: `Remove ${server.name}?`, body: "Only possible once it holds no databases. Nothing on the server itself is deleted.", confirmLabel: "Remove server", danger: true })).ok) return;
     setBusy(true);
     try {
       const r = await api<{ provisioner: string }>(`/api/servers/${server.id}/delete`, { body: {}, source: null });
@@ -211,6 +212,7 @@ function ServerDetail({ server, notify, onChanged }: { server: ServerInfo; notif
         <div className="hosted-card-head"><h2>Danger zone</h2></div>
         <div className="row"><div className="grow"><b>Remove server</b><div className="small muted">Forgets the server. Delete its databases first; nothing on the server itself is deleted.</div></div><button className="btn text-fail" disabled={busy || server.databases > 0} onClick={remove}>Remove</button></div>
       </section>
+      {confirmDialog}
     </div>
   );
 }
@@ -245,22 +247,23 @@ function Detail({ db, all, server, admin, notify, onChanged }: { db: SourceInfo;
     setBusy(key);
     try { await fn(); } catch (e) { notify((e as Error).message, true); } finally { setBusy(null); }
   };
-  const reset = () => {
-    if (!window.confirm(`New password for the ${role === "owner" ? "app" : "Crema read-only"} login of ${db.dbName}? Anything using the old one loses access now.`)) return;
+  const [ask, confirmDialog] = useConfirm();
+  const reset = async () => {
+    const who = role === "owner" ? "app" : "Crema read-only";
+    if (!(await ask({ title: `New password for the ${who} login?`, body: <>Login <span className="mono">{db.dbName}_{role === "owner" ? "owner" : "crema"}</span>. Anything using the old password loses access now.</>, confirmLabel: "Issue new password", danger: true })).ok) return;
     act("reset", async () => { setConn(await api<Conn>(`/api/sources/${db.id}/reset-password`, { body: { role }, source: null })); setReveal(true); notify("New password issued."); });
   };
-  const resetBranch = () => {
-    const typed = window.prompt(`Reset ${db.branch} from ${parent?.name}? Everything changed in this branch is lost. Type “${db.branch}” to confirm:`);
-    if (typed !== db.branch) { if (typed !== null) notify("The name didn't match; nothing was reset.", true); return; }
+  const resetBranch = async () => {
+    if (!(await ask({ title: `Reset ${db.branch} from ${parent?.name}?`, body: `Everything changed in this branch is lost, and ${parent?.name} is copied again. Its logins stay the same.`, type: db.branch!, confirmLabel: "Reset branch", danger: true })).ok) return;
     act("resetb", async () => { await api(`/api/sources/${db.id}/reset`, { body: {}, source: null }); notify(`Copying ${parent?.name} into ${db.branch}…`); onChanged(db.id); });
   };
   const retry = () => act("retry", async () => { await api(`/api/sources/${db.id}/retry`, { body: {}, source: null }); notify(`${db.dbName} is ready.`); onChanged(db.id); });
-  const remove = () => {
+  const remove = async () => {
     const name = hosted ? db.dbName! : db.slug;
-    const typed = window.prompt(hosted
-      ? `Delete ${name} and all its data? This can't be undone. Type the database name to confirm:`
-      : `Remove ${db.name} from Crema? Its certified metrics stop being served; the database itself isn't touched. Type “${name}” to confirm:`);
-    if (typed !== name) { if (typed !== null) notify("The name didn't match; nothing was removed.", true); return; }
+    const ok = (await ask(hosted
+      ? { title: parent ? `Delete branch ${db.branch}?` : `Delete ${name}?`, body: "Drops the database with all its data and both logins. This can't be undone.", type: name, confirmLabel: parent ? "Delete branch" : "Delete database", danger: true }
+      : { title: `Remove ${db.name} from Crema?`, body: "Its certified metrics stop being served. The database itself isn't touched.", type: name, confirmLabel: "Remove", danger: true })).ok;
+    if (!ok) return;
     act("delete", async () => { await api(`/api/sources/${db.id}/delete`, { body: {}, source: null }); notify(hosted ? `Deleted ${name}.` : `Removed ${db.name}.`); onChanged(); });
   };
 
@@ -281,6 +284,7 @@ function Detail({ db, all, server, admin, notify, onChanged }: { db: SourceInfo;
         <div className="hosted-card-head"><h2>Danger zone</h2></div>
         <div className="row"><div className="grow"><b>Remove from Crema</b><div className="small muted">Forgets the connection. Its metrics stop being served; history stays in the audit log. The database isn’t touched.</div></div><button className="btn text-fail" disabled={busy === "delete"} onClick={remove}>Remove</button></div>
       </section>}
+      {confirmDialog}
     </div>
   );
 
@@ -345,6 +349,7 @@ function Detail({ db, all, server, admin, notify, onChanged }: { db: SourceInfo;
         {ready && <div className="row"><div className="grow"><b>Reset password</b><div className="small muted">Issues a new password for the selected login. The old one stops working at once.</div></div><button className="btn" disabled={busy === "reset"} onClick={reset}>Reset password</button></div>}
         <div className="row"><div className="grow"><b>{parent ? "Delete branch" : "Delete database"}</b><div className="small muted">{branches.length ? `Delete its branches first (${branches.map((b) => b.branch).join(", ")}).` : "Drops the database, its data and both logins. Its metrics stop being served."}</div></div><button className="btn text-fail" disabled={busy === "delete" || branches.length > 0} onClick={remove}>Delete</button></div>
       </section>}
+      {confirmDialog}
     </div>
   );
 }
