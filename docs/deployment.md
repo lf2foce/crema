@@ -46,7 +46,10 @@ See the [official image's PGDATA change](https://hub.docker.com/_/postgres).
 The startup gate uses [Compose dependency conditions](https://docs.docker.com/compose/how-tos/startup-order/).
 No DB host port is published. Web binds to host loopback, port 3300 by default, so
 put a reverse proxy in front for public access. `APP_URL` must match the public
-HTTPS URL; set `CREMA_SETUP_TOKEN` before creating the first account there.
+HTTPS URL. To create the first admin, open the one-time setup link the `web` service
+prints in its log at startup (works once, for 24 hours; a restart or
+`docker compose exec web node --import tsx bin/crema.ts setup-link` issues a new one).
+`CREMA_SETUP_TOKEN`, if set, replaces the link with a fixed secret.
 
 `POSTGRES_PASSWORD` is interpolated into a connection URL: use the hex generation
 above, not punctuation requiring URL encoding. Rotating an env password does not
@@ -157,8 +160,8 @@ Access from the Mac without publishing an Internet port:
 ssh -N -L 127.0.0.1:13300:127.0.0.1:3300 phenau-vps
 ```
 
-Open `http://localhost:13300` (matches `APP_URL`). First-account creation requires
-the setup token from the service's Environment tab. This is a test instance:
+Open `https://crema.phenau.com`. The first admin is created from the one-time setup
+link in the `web` service's log (Dokploy → Logs). This is a test instance:
 there is no HA or scheduled state backup yet. Do not store irreplaceable state.
 Dokploy API requests can run inside its container over SSH; the public control
 domain has Cloudflare Access in addition to Dokploy's API-key authentication.

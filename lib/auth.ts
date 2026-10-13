@@ -9,6 +9,7 @@ import { mcp } from "@better-auth/mcp";
 import { cimd } from "@better-auth/cimd";
 import { fetchClientMetadataResource } from "@better-auth/cimd/node";
 import { database } from "@/core/db";
+import { setupCodeMatches, spendSetupCode } from "@/core/setupCode";
 
 export const APP_URL = (process.env.APP_URL ?? "http://localhost:3300").replace(/\/$/, "");
 export const MCP_RESOURCE = `${APP_URL}/api/mcp`;
@@ -17,14 +18,14 @@ export const googleEnabled = Boolean(process.env.GOOGLE_CLIENT_ID && process.env
 
 /**
  * Who may create the first (admin) account. On a public address anyone could claim an
- * uninitialised instance, so setup needs CREMA_SETUP_TOKEN there; on localhost it's open
- * unless a token is set anyway.
+ * uninitialised instance, so setup needs a code there: the one-time link the server logs at
+ * startup (core/setupCode.ts), or CREMA_SETUP_TOKEN when set. On localhost it's open unless a
+ * token is set anyway.
  */
-export function setupPolicy(): { tokenRequired: boolean; blocked: string | null } {
-  const token = process.env.CREMA_SETUP_TOKEN;
+export function setupPolicy(): { codeRequired: boolean; fixedToken: boolean } {
+  const fixedToken = Boolean(process.env.CREMA_SETUP_TOKEN);
   const local = ["localhost", "127.0.0.1", "::1"].includes(new URL(APP_URL).hostname);
-  if (token) return { tokenRequired: true, blocked: null };
-  return local ? { tokenRequired: false, blocked: null } : { tokenRequired: true, blocked: "Set CREMA_SETUP_TOKEN on the server to create the first account on a public address." };
+  return { codeRequired: fixedToken || !local, fixedToken };
 }
 
 function tokenMatches(given: string | null | undefined): boolean {
@@ -63,9 +64,12 @@ function createAuth() {
             // first account: check the setup token, then claim admin atomically — of two
             // simultaneous sign-ups only the one whose INSERT lands becomes admin
             const policy = setupPolicy();
-            if (policy.blocked) throw new APIError("FORBIDDEN", { message: policy.blocked });
             const given = ctx?.headers?.get("x-crema-setup-token") ?? ctx?.request?.headers.get("x-crema-setup-token");
-            if (policy.tokenRequired && !tokenMatches(given)) throw new APIError("FORBIDDEN", { message: "Wrong or missing setup token." });
+            if (policy.codeRequired && !tokenMatches(given) && !(await setupCodeMatches(pool, given))) {
+              throw new APIError("FORBIDDEN", { message: policy.fixedToken
+                ? "Wrong or missing setup token (CREMA_SETUP_TOKEN)."
+                : "This setup link is missing, used or expired. Open the newest link from the server log, or run `crema setup-link` for a new one." });
+            }
             const claim = await pool.query(
               `INSERT INTO settings (key, value) VALUES ('admin_claimed', $1)
                ON CONFLICT (key) DO UPDATE SET value = excluded.value
@@ -73,6 +77,7 @@ function createAuth() {
                  WHERE NOT EXISTS (SELECT 1 FROM "user") AND settings.value::timestamptz < now() - interval '2 minutes'
                RETURNING key`, [new Date().toISOString()]);
             if (!claim.rowCount) throw new APIError("FORBIDDEN", { message: "Someone else is setting up this instance. Ask them to invite you." });
+            await spendSetupCode(pool); // one use
             return { data: { ...user, role: "admin" } };
           },
           // everyone belongs to the default workspace: the first account owns it

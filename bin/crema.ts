@@ -6,6 +6,7 @@
 //   crema list
 //   crema query <source/key> [--from 2026-01-01] [--to ...] [--grain month] [--version 1] [--json]
 //   crema audit
+//   crema setup-link     # a new one-time link to create the first admin (replaces the previous one)
 //   crema mcp            # stdio MCP server exposing certified metrics only
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -44,6 +45,16 @@ const out = (s = "") => process.stdout.write(s + "\n");
 
 async function main() {
   switch (cmd) {
+    case "setup-link": {
+      const { database } = await import("../core/db");
+      const { issueSetupCode, setupBanner } = await import("../core/setupCode");
+      const db = database();
+      await db.ready;
+      const code = await issueSetupCode(db.pool);
+      if (!code) throw new CremaError("Crema already has accounts: an admin invites people from the People page.");
+      out(setupBanner(process.env.APP_URL ?? "http://localhost:3300", code));
+      break;
+    }
     case "connect": {
       if (!args[0]) throw new CremaError("Usage: crema connect <postgres-url>");
       const c = await r.addExternal(args[0], process.env.USER ?? "cli", flags.name);
