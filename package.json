@@ -19,6 +19,7 @@
     "worker": "tsx bin/worker.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:db": "CREMA_ENCRYPTION_KEY=${CREMA_ENCRYPTION_KEY:-test-only-key} CREMA_SAFETY_TEST_URL=${CREMA_SAFETY_TEST_URL:-postgresql://localhost:5432/postgres} vitest run",
     "test:e2e": "playwright test",
     "db:migrate": "tsx bin/migrate.ts",
     "auth:schema": "tsx bin/auth-schema.ts"

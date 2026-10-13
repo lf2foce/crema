@@ -30,7 +30,9 @@ test("add a server → create a database → connect → delete → remove the s
 
   // signed in as the admin (first account on a fresh instance, or the one an earlier spec created)
   await page.goto("/sign-in");
-  const first = await page.getByRole("heading", { name: "Set up Crema" }).isVisible().catch(() => false);
+  const submit = page.getByRole("button", { name: /^(Create admin account|Sign in)$/ });
+  await expect(submit).toBeVisible(); // wait for the form before deciding which one it is
+  const first = (await submit.textContent()) === "Create admin account";
   if (first) await page.getByLabel("Name").fill("E2E Reviewer");
   await page.getByLabel("Email").fill("reviewer@example.com");
   await page.getByLabel("Password").fill("e2e-password-1");

@@ -161,6 +161,7 @@ Why, and what was deliberately left out: [PRODUCT.md](PRODUCT.md).
 
 ```sh
 pnpm test          # unit + integration against the demo database; state in throwaway schemas of crema_test
+pnpm test:db       # also the suites that need a real cluster (hosting, safety, queue); run before deploying
 pnpm test:e2e      # the full loop in a browser, with the real model: connect → discover → certify → API
 ```
 
