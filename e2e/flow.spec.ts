@@ -21,25 +21,38 @@ test("set up → connect → discover → review → certify → reuse", async (
   await page.getByRole("button", { name: "try the demo database" }).click();
   // the status bar knows the database you just made (it once showed the first one in the list)
   await expect(page).toHaveURL(/\/projects\/[^/]+\/metrics/);
-  await expect(page.getByLabel("Database")).toHaveValue(new URL(page.url()).pathname.split("/")[2]);
+  await expect(page.getByLabel("Database", { exact: true })).toHaveValue(new URL(page.url()).pathname.split("/")[2]);
 
   // 2. discover: the live log, then the review queue
   await expect(page.getByText("Reading your schema")).toBeVisible();
   await expect(page.getByRole("heading", { name: /We found \d+ metrics in your business/ })).toBeVisible({ timeout: 200_000 });
 
+  // the slim header: crema, all metrics, and business & API · database on the right; the picker lives in the sidebar
+  const header = page.locator("header.statusbar");
+  await expect(header.getByRole("link", { name: "crema" })).toBeVisible();
+  await expect(header.getByRole("link", { name: "all metrics" })).toBeVisible();
+  await expect(header.getByRole("link", { name: "business & API" })).toBeVisible();
+  await expect(header.getByRole("link", { name: "database", exact: true })).toBeVisible();
+  await expect(header.getByLabel("Database", { exact: true })).toHaveCount(0);
+  const nav = page.getByRole("complementary", { name: "Navigation" });
+  await expect(nav.getByLabel("Database", { exact: true })).toBeVisible();
+  // the sidebar: "+ New metric" above the list; the counts above the line, the person below it, at the bottom
+  const picker = await nav.getByLabel("Database", { exact: true }).boundingBox();
+  const newMetric = await nav.getByRole("link", { name: "+ New metric" }).boundingBox();
+  const firstItem = await nav.locator(".nav-item").first().boundingBox();
+  expect(picker!.y).toBeLessThan(newMetric!.y);
+  expect(newMetric!.y).toBeLessThan(firstItem!.y);
+  const stats = await nav.getByText(/\d+ proposed · \d+ certified/).boundingBox();
+  const line = await nav.locator(".nav-foot").boundingBox();
+  const signOut = await nav.getByRole("button", { name: "sign out" }).boundingBox();
+  const navBox = await nav.boundingBox();
+  expect(stats!.y + stats!.height).toBeLessThanOrEqual(line!.y + 1); // the counts sit above the line
+  expect(signOut!.y).toBeGreaterThanOrEqual(line!.y); // the person below it
+  expect(signOut!.y + signOut!.height).toBeGreaterThan(navBox!.y + navBox!.height - 40);
+
   // 3. review: open the first (most contested) proposal, with evidence on real data
   await page.getByRole("link", { name: /Review first one/ }).click();
   await expect(page.getByText("Needs your decision")).toBeVisible();
-  // the review queue's column: "+ New metric" above the list; the counts above the line, the person below it
-  const rail = page.getByRole("navigation", { name: "Review queue" });
-  const newMetric = await rail.getByRole("link", { name: "+ New metric" }).boundingBox();
-  const firstInQueue = await rail.getByRole("link").nth(1).boundingBox();
-  expect(newMetric!.y).toBeLessThan(firstInQueue!.y);
-  const stats = await rail.getByText(/\d+ proposed · \d+ certified/).boundingBox();
-  const line = await rail.locator(".rail-foot").boundingBox();
-  const signOut = await rail.getByRole("button", { name: "sign out" }).boundingBox();
-  expect(stats!.y + stats!.height).toBeLessThanOrEqual(line!.y + 1); // the counts sit above the line
-  expect(signOut!.y).toBeGreaterThanOrEqual(line!.y); // the person below it
   await expect(page.getByText("Checked by Crema against your data, not by the model")).toBeVisible();
   await expect(page.getByText("Observed in your database")).toBeVisible();
   await expect(page.getByText("Inferred business meaning")).toBeVisible();
