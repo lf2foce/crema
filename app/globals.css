@@ -201,7 +201,13 @@ label.field .input, label.field .select, label.field textarea { color: var(--tex
 .statusbar .sb-left { display: flex; align-items: center; gap: var(--sp-2); min-width: 0; overflow: hidden; }
 .statusbar .sb-right { display: flex; align-items: center; gap: var(--sp-2); flex-shrink: 0; }
 .app { display: grid; grid-template-columns: var(--nav-w) minmax(0, 1fr); min-height: calc(100vh - var(--bar-h)); }
+.app.app-wide { grid-template-columns: minmax(0, 1fr); }
 .app-main { min-width: 0; }
+.nav-branches { display: flex; flex-wrap: wrap; gap: var(--sp-1); padding: 0 var(--sp-1); }
+.nav-branches a { display: inline-flex; align-items: center; gap: var(--sp-1); height: 26px; padding: 0 var(--sp-2); border: 1px solid var(--border); border-radius: 6px; background: var(--panel); color: var(--text); font-size: var(--fs-small); }
+.nav-branches a:hover { text-decoration: none; background: var(--hover); }
+.nav-branches a.on { border-color: var(--text); box-shadow: inset 0 0 0 1px var(--text); }
+.statusbar .sb-user { display: flex; align-items: center; gap: var(--sp-2); white-space: nowrap; }
 .nav { position: sticky; top: var(--bar-h); height: calc(100vh - var(--bar-h)); display: flex; flex-direction: column; background: var(--subtle); border-right: 1px solid var(--border); min-width: 0; }
 .nav-top { display: grid; gap: var(--sp-2); padding: var(--sp-4) var(--sp-3) var(--sp-3); }
 .nav-warn { padding: 0 var(--sp-2); font-size: var(--fs-small); color: var(--warn); }

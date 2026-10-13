@@ -89,17 +89,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <Ctx.Provider value={value}>
       <NewVersion />
-      <Suspense fallback={<header className="statusbar" />}><StatusBar /></Suspense>
-      <div className="app">
-        {/* usePathname() inside a dynamic route needs a Suspense boundary */}
-        <Suspense fallback={<aside className="nav" />}><Sidebar setSlot={setNavSlot} /></Suspense>
-        <div className="app-main">
+      {/* usePathname() inside a dynamic route needs a Suspense boundary */}
+      <Suspense fallback={<header className="statusbar" />}>
+        <Frame setSlot={setNavSlot}>
           {!workspace && error
             ? <div className="center"><div className="hero"><h1>Can’t reach Crema</h1><p className="lead">{error}</p><button className="btn" onClick={reload}>Retry</button></div></div>
             : !workspace ? <div className="center"><span className="spin" /></div>
             : children}
-        </div>
-      </div>
+        </Frame>
+      </Suspense>
       {toast && <div className={`toast ${toast.error ? "error" : ""}`} role="status">{toast.text}</div>}
     </Ctx.Provider>
   );
@@ -112,9 +110,30 @@ export function nextUp(state: AppState) {
 
 const DATABASE_PAGES = ["schema", "tables", "sql"];
 
+/**
+ * Header on top; below it the sidebar (the metrics to settle: proposals, certified) and the page.
+ * The raw-database pages (schema, tables, SQL) have no sidebar: it's for settling metrics. There the
+ * header carries who you are instead.
+ */
+function Frame({ setSlot, children }: { setSlot: (el: HTMLDivElement | null) => void; children: React.ReactNode }) {
+  const { slug } = useApp();
+  const section = sectionOf(usePathname());
+  const wide = !!slug && DATABASE_PAGES.includes(section ?? "");
+  return (
+    <>
+      <StatusBar account={wide} />
+      <div className={`app ${wide ? "app-wide" : ""}`}>
+        {!wide && <Sidebar setSlot={setSlot} />}
+        <div className="app-main">{children}</div>
+      </div>
+    </>
+  );
+}
+
 /** The slim header: where you are (crema, all metrics / this metric) and the two places to go from a database. */
-function StatusBar() {
+function StatusBar({ account }: { account: boolean }) {
   const { slug, state, workspace } = useApp();
+  const me = workspace?.me ?? null;
   const pathname = usePathname();
   const params = useParams<{ key?: string; id?: string }>();
   const section = sectionOf(pathname);              // which page of a database; null elsewhere
@@ -141,6 +160,13 @@ function StatusBar() {
         </nav>
       )}
       {busy && <span>scanning…</span>}
+      {account && me && (
+        <span className="sb-user">
+          <Link href={me.role === "admin" ? routes.people : routes.projects} title={me.email}>{me.name}</Link>
+          <span>·</span>
+          <button className="sb-btn" onClick={async () => { await authClient.signOut(); window.location.href = "/sign-in"; }}>sign out</button>
+        </span>
+      )}
     </header>
   );
 }
@@ -167,17 +193,32 @@ function Sidebar({ setSlot }: { setSlot: (el: HTMLDivElement | null) => void }) 
   const onMetric = section === "metrics" && !!params.key;
   const next = src && state && onMetric ? nextUp(state) : null;
   const scanning = !!src && state?.run?.status === "running";
+  // the picker lists projects; a project's branches are chosen beside it
+  const projects = useMemo(() => {
+    const seen = new Map<number, { id: number; name: string }>();
+    for (const x of workspace?.sources ?? []) if (!seen.has(x.projectId)) seen.set(x.projectId, { id: x.projectId, name: x.projectName });
+    return [...seen.values()];
+  }, [workspace]);
+  const branches = src ? (workspace?.sources ?? []).filter((x) => x.projectId === src.projectId && x.status === "ready").sort((a, b) => Number(!!a.parentId) - Number(!!b.parentId) || a.id - b.id) : [];
   const link = (href: string, label: string, on: boolean) => <Link key={href} href={href} className={on ? "on" : ""} aria-current={on ? "page" : undefined}>{label}</Link>;
   return (
     <aside className="nav" aria-label="Navigation">
       <div className="nav-top">
-        {workspace && workspace.sources.length > 0 ? (
-          <select className="sb-select" aria-label="Database" value={inDatabase ? slug ?? "" : ""} onChange={(e) => router.push(e.target.value ? routes.metrics(e.target.value) : routes.projects)}>
-            {!inDatabase && <option value="">all databases</option>}
-            {inDatabase && slug && !workspace.sources.some((x) => x.slug === slug) && <option value={slug}>{slug}</option>}
-            {workspace.sources.map((x) => <option key={x.id} value={x.slug}>{x.name}{x.status !== "ready" ? ` (${x.status})` : ""}</option>)}
-          </select>
-        ) : <span className="nav-empty">no database yet</span>}
+        {src && state && (
+          <>
+            <select className="sb-select" aria-label="Project" value={String(src.projectId)} onChange={(e) => {
+              const main = workspace?.sources.find((x) => x.projectId === Number(e.target.value) && !x.parentId);
+              if (main) router.push(routes.metrics(main.slug));
+            }}>
+              {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+            {branches.length > 1 && (
+              <div className="nav-branches" role="group" aria-label="Branch">
+                {branches.map((b) => <Link key={b.id} href={sameSectionIn(pathname, b.slug)} className={b.id === src.id ? "on" : ""} aria-current={b.id === src.id ? "true" : undefined}>{b.branch}<EnvBadge environment={b.environment} /></Link>)}
+              </div>
+            )}
+          </>
+        )}
         {src && !src.readOnly && <span className="nav-warn" title={`This login can write to ${src.writableTables} tables. Crema only runs read-only transactions, but a read-only login is safer.`}>(login can write)</span>}
       </div>
 

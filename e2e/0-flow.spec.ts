@@ -31,7 +31,7 @@ test("set up → connect → discover → review → certify → reuse", async (
   await page.getByRole("button", { name: "try the demo database" }).click();
   // the status bar knows the database you just made (it once showed the first one in the list)
   await expect(page).toHaveURL(/\/projects\/[^/]+\/metrics/);
-  await expect(page.getByLabel("Database", { exact: true })).toHaveValue(new URL(page.url()).pathname.split("/")[2]);
+  await expect(page.getByLabel("Project", { exact: true }).locator("option:checked")).toHaveText("Demo (Lumen SaaS)");
 
   // 2. discover: the live log, then the review queue
   await expect(page.getByText("Reading your schema")).toBeVisible();
@@ -43,11 +43,11 @@ test("set up → connect → discover → review → certify → reuse", async (
   await expect(header.getByRole("link", { name: "all metrics" })).toBeVisible();
   await expect(header.getByRole("link", { name: "business & API" })).toBeVisible();
   await expect(header.getByRole("link", { name: "database", exact: true })).toBeVisible();
-  await expect(header.getByLabel("Database", { exact: true })).toHaveCount(0);
+  await expect(header.getByLabel("Project", { exact: true })).toHaveCount(0);
   const nav = page.getByRole("complementary", { name: "Navigation" });
-  await expect(nav.getByLabel("Database", { exact: true })).toBeVisible();
+  await expect(nav.getByLabel("Project", { exact: true })).toBeVisible();
   // the sidebar: "+ New metric" above the list; the counts above the line, the person below it, at the bottom
-  const picker = await nav.getByLabel("Database", { exact: true }).boundingBox();
+  const picker = await nav.getByLabel("Project", { exact: true }).boundingBox();
   const newMetric = await nav.getByRole("link", { name: "+ New metric" }).boundingBox();
   const firstItem = await nav.locator(".nav-item").first().boundingBox();
   expect(picker!.y).toBeLessThan(newMetric!.y);
@@ -106,6 +106,9 @@ test("set up → connect → discover → review → certify → reuse", async (
   const slug = new URL(page.url()).pathname.split("/")[2]; // /projects/<database>/metrics/<metric>
   expect(new URL(page.url()).pathname).toMatch(/^\/projects\/[^/]+\/metrics\/[^/]+$/);
   await page.goto(`/projects/${slug}/schema`);
+  // the raw-database pages have no sidebar (it's for settling metrics); the header carries who you are
+  await expect(page.getByRole("complementary", { name: "Navigation" })).toHaveCount(0);
+  await expect(page.locator("header.statusbar").getByRole("button", { name: "sign out" })).toBeVisible();
   await expect(page.getByRole("button", { name: "accounts table" })).toBeVisible();
   await page.getByRole("button", { name: "subscriptions table" }).click();
   await expect(page.getByRole("heading", { name: "Read by" })).toBeVisible();
