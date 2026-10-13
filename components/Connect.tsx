@@ -38,9 +38,10 @@ export function Connect({ state, notify }: { state: AppState; notify: (t: string
           <input placeholder="postgresql://readonly@host:5432/db" value={url} onChange={(e) => setUrl(e.target.value)} autoFocus spellCheck={false} aria-label="Postgres connection string" />
         </div>
         <div className="palette-env" role="group" aria-label="What is this database? (optional)">
-          <span className="muted">This database is</span>
-          {([["", "not labelled"], ["production", "production"], ["staging", "staging"], ["development", "development"]] as const).map(([v, label]) => (
-            <button key={v} type="button" aria-pressed={environment === v} className={environment === v ? "on" : ""} onClick={() => setEnvironment(v)}>{label}</button>
+          <span className="muted">Label it (optional)</span>
+          {(["production", "staging", "development"] as const).map((v) => (
+            // pick one, or click it again (or none) to leave it unlabelled
+            <button key={v} type="button" aria-pressed={environment === v} className={environment === v ? "on" : ""} onClick={() => setEnvironment(environment === v ? "" : v)}>{v}</button>
           ))}
         </div>
         <div className="palette-opts">
@@ -57,11 +58,6 @@ export function Connect({ state, notify }: { state: AppState; notify: (t: string
         </div>
       </form>
       {(state.servers.length > 0 || state.suggestedServer) && <p className="connect-alt">No database yet? <Link href={routes.projects}>Create one</Link> for your app; Crema can analyse it too.</p>}
-      <div className="trust-row">
-        <span>Never writes to your database</span>
-        <span title={`Model: ${state.model.name}`}>No rows sent to the AI</span>
-        <span>A person certifies every metric</span>
-      </div>
     </div>
   );
 }

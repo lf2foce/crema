@@ -19,6 +19,9 @@ import type { Candidate, CandidateSpec, Concept, Environment, Metric, MetricKind
 import { driftedRelations, fingerprint, pgError, verify, windows } from "./verify";
 import { assertSingleSelect, bind, describeUrl, seriesSql, SqlContractError, Warehouse } from "./warehouse";
 
+/** What the demo database is called when it's connected from the Connect page. */
+export const DEMO_NAME = "Demo (Lumen SaaS)";
+
 export class CremaError extends Error {
   constructor(message: string, readonly status = 400) { super(message); }
 }

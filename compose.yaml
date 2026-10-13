@@ -28,6 +28,8 @@ x-app: &app
     GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
     CREMA_DRIFT_CRON: ${CREMA_DRIFT_CRON:-0 * * * *}
     CREMA_CURRENCY: ${CREMA_CURRENCY:-VND}
+    # optional: a sample database offered on the Connect page (see demo/)
+    CREMA_DEMO_URL: ${CREMA_DEMO_URL:-}
     # the bundled hosting server, offered in Databases → Servers: Crema's limited login only
     CREMA_BUNDLED_SERVER_URL: postgresql://crema_provisioner:${HOSTING_PROVISIONER_PASSWORD:?Set a URL-safe HOSTING_PROVISIONER_PASSWORD}@hosting:5432/postgres?sslmode=no-verify
     CREMA_BUNDLED_SERVER_PUBLIC_HOST: ${CREMA_HOSTING_PUBLIC_HOST:-localhost:5433}
