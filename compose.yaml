@@ -93,6 +93,8 @@ services:
   web:
     <<: *app
     restart: unless-stopped
+    # explicit, so a platform that adds its proxy network (Dokploy, for a domain) keeps this one too
+    networks: [default]
     ports:
       - "127.0.0.1:${CREAMA_HTTP_PORT:-3300}:3300"
     depends_on:
