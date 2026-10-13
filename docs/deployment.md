@@ -223,7 +223,13 @@ Nothing is built on the VPS. To roll back, set `CREMA_IMAGE_TAG=sha-<commit>` in
 Dokploy's environment and redeploy; set it back to `latest` afterwards.
 
 Open `https://crema.phenau.com`. The first admin is created from the one-time setup
-link in the `web` service's log (Dokploy → Logs). This is a test instance:
-there is no HA or scheduled state backup yet. Do not store irreplaceable state.
+link in the `web` service's log (Dokploy → Logs). This is a test instance without HA.
+
+Backups: R2 bucket `crema-backups` (a token for that bucket only), path `/crema-test`.
+WAL is archived continuously; `/etc/cron.d/phenau-crema-backup` runs
+`/usr/local/bin/phenau-crema-backup.sh` at 03:00 (+07), full on Sundays, diff otherwise,
+and reports to the ops Telegram room. The passphrase is in Dokploy's environment and
+in the owner's macOS Keychain ("Crema backup passphrase (R2 crema-backups/crema-test)").
+Restore drill on 13/10/2026: state in 22 s, hosting in 16 s, both to the latest commit.
 Dokploy API requests can run inside its container over SSH; the public control
 domain has Cloudflare Access in addition to Dokploy's API-key authentication.
