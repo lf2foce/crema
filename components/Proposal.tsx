@@ -6,7 +6,8 @@ import { display, fmt } from "@/core/format";
 import type { Candidate, MemberDiff } from "@/core/types";
 import { actor, api, contested, windowLabel, type Concept, type Verification } from "@/lib/client";
 import { CheckSummary, checkSummary, Code, ConfidenceChip, Distribution, LineChart, SERIES, useConfirm } from "./ui";
-import { useSlug } from "./AppShell";
+import { authClient } from "@/lib/authClient";
+import { useApp, useSlug } from "./AppShell";
 
 type Payload = { table: string; columns: { name: string; values?: Record<string, number> | string; null_pct?: number; distinct?: number; min?: string; max?: string }[]; rows: number }[];
 const payloadCache = new Map<number, Promise<Payload>>();
@@ -43,6 +44,8 @@ export function ProposalView({ concept, queue, runId, model, back, notify, onCer
 }) {
   const [ask, confirmDialog] = useConfirm();
   const slug = useSlug();
+  const { state, workspace } = useApp();
+  const me = workspace?.me ?? null;
   const cands = concept.candidates;
   const [idx, setIdx] = useState(() => bestIndex(cands));
   const cand = cands[idx];
@@ -128,11 +131,20 @@ export function ProposalView({ concept, queue, runId, model, back, notify, onCer
     <div className="review">
       <nav className="rail" aria-label="Review queue">
         <div className="rail-inner">
+          <div className="rail-new"><Link className="btn sm" href={routes.newMetric(slug)}>+ New metric</Link></div>
           {needs.length > 0 && <h4>Needs you · {needs.length}</h4>}
           {needs.map((c) => <Link key={c.id} href={routes.proposal(slug, c.id)} className={c.id === concept.id ? "on" : ""}>{c.name}</Link>)}
           {looks.length > 0 && <h4>Looks right · {looks.length}</h4>}
           {looks.map((c) => <Link key={c.id} href={routes.proposal(slug, c.id)} className={c.id === concept.id ? "on" : ""}>{c.name}</Link>)}
         </div>
+        {/* where we stand, above the line; who you are, below it */}
+        {state && <div className="rail-stats">{state.proposals.length} proposed · {state.metrics.length} certified</div>}
+        {me && (
+          <div className="rail-foot">
+            <span className="ellipsis" title={me.email}>{me.name}</span>
+            <button className="sb-btn" onClick={async () => { await authClient.signOut(); window.location.href = "/sign-in"; }}>sign out</button>
+          </div>
+        )}
       </nav>
 
       <main className="doc">

@@ -30,6 +30,16 @@ test("set up → connect → discover → review → certify → reuse", async (
   // 3. review: open the first (most contested) proposal, with evidence on real data
   await page.getByRole("link", { name: /Review first one/ }).click();
   await expect(page.getByText("Needs your decision")).toBeVisible();
+  // the review queue's column: "+ New metric" above the list; the counts above the line, the person below it
+  const rail = page.getByRole("navigation", { name: "Review queue" });
+  const newMetric = await rail.getByRole("link", { name: "+ New metric" }).boundingBox();
+  const firstInQueue = await rail.getByRole("link").nth(1).boundingBox();
+  expect(newMetric!.y).toBeLessThan(firstInQueue!.y);
+  const stats = await rail.getByText(/\d+ proposed · \d+ certified/).boundingBox();
+  const line = await rail.locator(".rail-foot").boundingBox();
+  const signOut = await rail.getByRole("button", { name: "sign out" }).boundingBox();
+  expect(stats!.y + stats!.height).toBeLessThanOrEqual(line!.y + 1); // the counts sit above the line
+  expect(signOut!.y).toBeGreaterThanOrEqual(line!.y); // the person below it
   await expect(page.getByText("Checked by Crema against your data, not by the model")).toBeVisible();
   await expect(page.getByText("Observed in your database")).toBeVisible();
   await expect(page.getByText("Inferred business meaning")).toBeVisible();

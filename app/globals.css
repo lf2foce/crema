@@ -264,8 +264,13 @@ h1.title { font: 500 var(--fs-display)/1.1 var(--font-serif); margin: var(--sp-3
 
 /* ---------- evidence / document ---------- */
 .review { display: grid; grid-template-columns: 220px minmax(0, 1fr) 320px; min-height: calc(100vh - 37px); }
-.rail { border-right: 1px solid var(--border); background: var(--subtle); padding: var(--sp-4) 0; }
-.rail-inner { position: sticky; top: 51px; }
+.rail { border-right: 1px solid var(--border); background: var(--subtle); display: flex; flex-direction: column; position: sticky; top: 37px; align-self: start; height: calc(100vh - 37px); }
+.rail-inner { flex: 1; min-height: 0; overflow-y: auto; padding: var(--sp-4) 0; }
+.rail-new { padding: 0 var(--sp-3) var(--sp-2); }
+.rail .rail-new a { display: flex; justify-content: center; padding: 0 var(--sp-3); border-left: 1px solid var(--border); }
+.rail-stats { padding: var(--sp-3) var(--sp-4); font: 400 var(--fs-small) var(--mono); color: var(--muted); }
+.rail-foot { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-2); padding: var(--sp-3) var(--sp-4) var(--sp-4); border-top: 1px solid var(--border); font: 400 var(--fs-small) var(--mono); color: var(--muted); }
+.rail-foot .ellipsis { min-width: 0; }
 .rail h4 { margin: var(--sp-2) var(--sp-4) var(--sp-2); font: 400 var(--fs-label)/1.4 var(--mono); text-transform: uppercase; color: var(--muted); }
 .rail h4:not(:first-child) { margin-top: var(--sp-5); }
 .rail a { display: flex; gap: var(--sp-2); align-items: center; padding: var(--sp-2) var(--sp-4) var(--sp-2) var(--sp-3); border-left: 3px solid transparent; color: var(--text); font-size: var(--fs-body); line-height: 1.3; }
