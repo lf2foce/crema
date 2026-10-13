@@ -63,6 +63,7 @@ export function Registry({ state, proposals, reload, notify }: { state: AppState
         <span className="grow" />
         <span className="hints">j/k move · ↵ open</span>
         <input className="input search" placeholder="Find a definition…" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search metrics" autoComplete="off" />
+        <Link className="btn sm" href={routes.newMetric(slug)}>+ New metric</Link>
       </div>
 
       <div className="reg-head" aria-hidden>

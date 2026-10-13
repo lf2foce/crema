@@ -67,13 +67,14 @@ export function Databases({ state, selected, server, notify, reload }: { state: 
         <ul className="sql-list">
           {projects.map((pr) => (
             <li key={pr.id} className="proj">
-              <div className="proj-name ellipsis">{pr.name}</div>
+              {!(pr.branches.length === 1 && pr.branches[0].kind === "external" && !pr.branches[0].environment) && <div className="proj-name ellipsis">{pr.name}</div>}
               {pr.branches.map((d) => {
                 const problem = d.status !== "ready";
                 const meta = problem ? (d.status === "provisioning" && d.parentId ? "copying" : d.status) : d.kind === "hosted" ? size(d.sizeBytes) : "connected";
                 return (
                   <button key={d.id} className={`sql-item ${d.id === db?.id ? "on" : ""}`} onClick={() => go(d.slug)} title={`${d.kind === "hosted" ? "hosted" : "connected"}${d.metrics ? ` · ${d.metrics} metric${d.metrics > 1 ? "s" : ""}` : ""}`}>
-                    <span className="ellipsis">{d.branch}</span><EnvBadge environment={d.environment} />
+                    {d.kind === "external" && !d.environment && pr.branches.length === 1
+                      ? <span className="ellipsis pname">{pr.name}</span> : <span className="ellipsis">{d.branch}</span>}<EnvBadge environment={d.environment} />
                     <span className={`meta ${problem ? "warn" : ""}`}>{meta}</span>
                   </button>
                 );
@@ -320,10 +321,10 @@ function ProjectView({ db, all, server, admin, notify, onChanged }: { db: Source
     <>
       <div className="eyebrow">{hosted ? "Hosted project" : "Connected database"}</div>
       <div className="project-head"><h1 className="title">{db.projectName}</h1>{admin && <button className="btn ghost sm" onClick={() => setRenaming(true)} title="Rename the project (database names never change)">Rename</button>}</div>
-      <nav className="branch-tabs" aria-label="Branches">
+      {(hosted || siblings.length > 1 || db.environment) && <nav className="branch-tabs" aria-label="Branches">
         {siblings.map((d) => <Link key={d.id} href={routes.project(d.slug)} className={d.id === db.id ? "on" : ""} aria-current={d.id === db.id ? "page" : undefined}>{d.branch}<EnvBadge environment={d.environment} /></Link>)}
         {admin && hosted && main.status === "ready" && <button type="button" onClick={() => setBranching(true)}>+ Branch</button>}
-      </nav>
+      </nav>}
       {ready && <nav className="section-links" aria-label="Section">
         <Link href={routes.project(db.slug)} className="on" aria-current="page">Connect</Link>
         <Link href={routes.tables(db.slug)}>Tables</Link>

@@ -196,6 +196,7 @@ label.field .input, label.field .select, label.field textarea { color: var(--tex
 .statusbar a:hover { color: var(--text); }
 .statusbar a.on { color: var(--accent); text-decoration: underline; text-underline-offset: 3px; }
 .statusbar .sb-brand { color: var(--text); font-weight: 500; }
+.statusbar .sb-project { color: var(--text); }
 .statusbar .sb-brand + a { margin-left: var(--sp-3); }
 .statusbar .sb-left a.on { color: var(--accent); text-decoration: underline; text-underline-offset: 3px; }
 .statusbar .sb-left { display: flex; align-items: center; gap: var(--sp-2); min-width: 0; overflow: hidden; }
@@ -585,7 +586,8 @@ table.plain td.mono { font-size: var(--fs-ui); }
 .env-development { background: transparent; color: var(--muted); border-color: var(--border); }
 .sql-list li.proj { display: block; margin: 0 0 var(--sp-3); }
 .sql-list li.proj:hover { background: none; }
-.proj-name { padding: var(--sp-1) var(--sp-4); font-size: var(--fs-ui); font-weight: 500; }
+.proj-name, .proj .pname { color: var(--accent); font-weight: 500; }
+.proj-name { padding: var(--sp-1) var(--sp-4); font-size: var(--fs-ui); }
 .proj .sql-item { display: flex; align-items: center; flex-wrap: nowrap; gap: var(--sp-2); width: 100%; padding: 6px var(--sp-4) 6px var(--sp-3); border-left: 3px solid transparent; border-radius: 0; font-size: var(--fs-body); }
 .proj .sql-item:hover { background: var(--hover); }
 .proj .sql-item.on { background: var(--panel); border-left-color: var(--accent); font-weight: 500; }

@@ -112,13 +112,14 @@ const DATABASE_PAGES = ["schema", "tables", "sql"];
 
 /**
  * Header on top; below it the sidebar (the metrics to settle: proposals, certified) and the page.
- * The raw-database pages (schema, tables, SQL) have no sidebar: it's for settling metrics. There the
- * header carries who you are instead.
+ * Only the proposal pages have the sidebar (it's for settling metrics: the queue, certified ones): the
+ * list of metrics already is the metrics page. Everywhere else in a database the header carries who you are.
  */
 function Frame({ setSlot, children }: { setSlot: (el: HTMLDivElement | null) => void; children: React.ReactNode }) {
   const { slug } = useApp();
   const section = sectionOf(usePathname());
-  const wide = !!slug && DATABASE_PAGES.includes(section ?? "");
+  // the sidebar is for settling proposals; every other page of a database has the room (and the header holds the person)
+  const wide = !!slug && !!section && section !== "proposals";
   return (
     <>
       <StatusBar account={wide} />
@@ -147,7 +148,7 @@ function StatusBar({ account }: { account: boolean }) {
       <span className="sb-left">
         <Link href={routes.projects} className="sb-brand">crema</Link>
         {!src && workspace?.me?.role === "admin" && <Link href={routes.people} className={pathname === routes.people ? "on" : ""} title="People who can sign in">People</Link>}
-        {src && <><span>—</span><Link href={routes.metrics(src.slug)} className={inner ? "on" : ""}>{inner ? "← all metrics" : "all metrics"}</Link></>}
+        {src && <><span>—</span><Link href={routes.project(src.slug)} className="sb-project" title="How to connect, branches">{src.name}</Link><EnvBadge environment={src.environment} /><span>—</span><Link href={routes.metrics(src.slug)} className={inner ? "on" : ""}>{inner ? "← all metrics" : "all metrics"}</Link></>}
         {onMetric && <span className="ellipsis">/ {safeDecode(params.key!)}</span>}
         {onProposal && <span className="ellipsis">/ {state?.proposals.find((p) => p.id === Number(params.id))?.key ?? "proposal"}</span>}
       </span>

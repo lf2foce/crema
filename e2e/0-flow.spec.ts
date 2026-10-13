@@ -31,7 +31,7 @@ test("set up → connect → discover → review → certify → reuse", async (
   await page.getByRole("button", { name: "try the demo database" }).click();
   // the status bar knows the database you just made (it once showed the first one in the list)
   await expect(page).toHaveURL(/\/projects\/[^/]+\/metrics/);
-  await expect(page.getByLabel("Project", { exact: true }).locator("option:checked")).toHaveText("Demo (Lumen SaaS)");
+  await expect(page.locator("header.statusbar .sb-project")).toContainText("Demo (Lumen SaaS)");
 
   // 2. discover: the live log, then the review queue
   await expect(page.getByText("Reading your schema")).toBeVisible();
@@ -44,6 +44,13 @@ test("set up → connect → discover → review → certify → reuse", async (
   await expect(header.getByRole("link", { name: "business & API" })).toBeVisible();
   await expect(header.getByRole("link", { name: "database", exact: true })).toBeVisible();
   await expect(header.getByLabel("Project", { exact: true })).toHaveCount(0);
+  // the metrics list has no sidebar: that is for certifying
+  await expect(page.getByRole("complementary", { name: "Navigation" })).toHaveCount(0);
+
+  // 3. review: open the first (most contested) proposal, with evidence on real data
+  await page.getByRole("link", { name: /Review first one/ }).click();
+  await expect(page.getByText("Needs your decision")).toBeVisible();
+  await expect(header.getByRole("link", { name: "← all metrics" })).toBeVisible(); // inside a page, the way back is the green link
   const nav = page.getByRole("complementary", { name: "Navigation" });
   await expect(nav.getByLabel("Project", { exact: true })).toBeVisible();
   // the sidebar: "+ New metric" above the list; the counts above the line, the person below it, at the bottom
@@ -59,11 +66,6 @@ test("set up → connect → discover → review → certify → reuse", async (
   expect(stats!.y + stats!.height).toBeLessThanOrEqual(line!.y + 1); // the counts sit above the line
   expect(signOut!.y).toBeGreaterThanOrEqual(line!.y); // the person below it
   expect(signOut!.y + signOut!.height).toBeGreaterThan(navBox!.y + navBox!.height - 40);
-
-  // 3. review: open the first (most contested) proposal, with evidence on real data
-  await page.getByRole("link", { name: /Review first one/ }).click();
-  await expect(page.getByText("Needs your decision")).toBeVisible();
-  await expect(header.getByRole("link", { name: "← all metrics" })).toBeVisible(); // inside a page, the way back is the green link
   await expect(page.getByText("Checked by Crema against your data, not by the model")).toBeVisible();
   await expect(page.getByText("Observed in your database")).toBeVisible();
   await expect(page.getByText("Inferred business meaning")).toBeVisible();
