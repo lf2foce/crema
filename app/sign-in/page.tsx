@@ -1,6 +1,13 @@
 "use client";
 import { useEffect, useState } from "react";
 import { authClient, nextUrl } from "@/lib/authClient";
+import { MIN_PASSWORD_LENGTH } from "@/lib/password";
+
+/** A pasted setup link, or just its code: keep the code. */
+const codeFrom = (v: string) => {
+  const t = v.trim();
+  try { return new URL(t).searchParams.get("setup") ?? t; } catch { return t; }
+};
 
 export default function SignIn() {
   const [setup, setSetup] = useState<{ hasUsers: boolean; google: boolean; setupCode?: boolean; fixedToken?: boolean } | null>(null);
@@ -49,10 +56,13 @@ export default function SignIn() {
         {first && <p className="use-note">You’re the first person here, so this account becomes the admin. Others join when you invite them.</p>}
         {first && setup.setupCode && !fromLink && (setup.fixedToken
           ? <label className="field">Setup token<input className="input" value={token} onChange={(e) => setToken(e.target.value)} required autoComplete="off" spellCheck={false} /></label>
-          : <p className="small m-0">To create the admin on this address, open the <b>setup link</b> Crema printed in its server log when it started (in Docker: the <span className="mono">web</span> service’s logs). No log at hand? Run <span className="mono">crema setup-link</span> on the server for a new one.</p>)}
+          : <label className="field">Setup link
+              <input className="input mono" value={token} onChange={(e) => setToken(codeFrom(e.target.value))} required autoComplete="off" spellCheck={false} placeholder="https://…/sign-in?setup=…" />
+              <span className="small muted">Paste the one-time link Crema printed in its server log when it started (in Docker: the <span className="mono">web</span> service’s logs). Lost it? Restart Crema, or run <span className="mono">crema setup-link</span> on the server.</span>
+            </label>)}
         {first && <label className="field">Name<input className="input" value={name} onChange={(e) => setName(e.target.value)} required autoFocus /></label>}
         <label className="field">Email<input className="input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required autoFocus={!first} autoComplete="email" /></label>
-        <label className="field">Password<input className="input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required minLength={10} autoComplete={first ? "new-password" : "current-password"} /></label>
+        <label className="field">Password<input className="input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required minLength={MIN_PASSWORD_LENGTH} placeholder={first ? `At least ${MIN_PASSWORD_LENGTH} characters` : undefined} autoComplete={first ? "new-password" : "current-password"} /></label>
         {error && <p className="text-fail small m-0">{error}</p>}
         <button className="btn primary lg" disabled={busy || (first && !!setup.setupCode && !token)}>{busy ? <span className="spin" /> : first ? "Create admin account" : "Sign in"}</button>
         {setup.google && !first && <>

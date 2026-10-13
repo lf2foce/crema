@@ -9,6 +9,7 @@ import { mcp } from "@better-auth/mcp";
 import { cimd } from "@better-auth/cimd";
 import { fetchClientMetadataResource } from "@better-auth/cimd/node";
 import { database } from "@/core/db";
+import { MIN_PASSWORD_LENGTH } from "@/lib/password";
 import { setupCodeMatches, spendSetupCode } from "@/core/setupCode";
 
 export const APP_URL = (process.env.APP_URL ?? "http://localhost:3300").replace(/\/$/, "");
@@ -48,7 +49,7 @@ function createAuth() {
     secret: process.env.BETTER_AUTH_SECRET,
     database: pool,
     trustedOrigins,
-    emailAndPassword: { enabled: true, minPasswordLength: 10 },
+    emailAndPassword: { enabled: true, minPasswordLength: MIN_PASSWORD_LENGTH },
     socialProviders: googleEnabled ? { google: { clientId: process.env.GOOGLE_CLIENT_ID!, clientSecret: process.env.GOOGLE_CLIENT_SECRET!, disableImplicitSignUp: true } } : {},
     // an invited email signing in with Google joins the same account
     account: { accountLinking: { enabled: true, trustedProviders: ["google"] } },

@@ -1,5 +1,6 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
+import { MIN_PASSWORD_LENGTH } from "@/lib/password";
 import { ago, type Me } from "@/lib/client";
 import { authClient } from "@/lib/authClient";
 
@@ -55,7 +56,7 @@ export function People({ me, notify }: { me: Me; notify: (t: string, e?: boolean
         <div className="form-grid">
           <label className="field">Name<input className="input" value={name} onChange={(e) => setName(e.target.value)} required /></label>
           <label className="field">Email<input className="input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required /></label>
-          <label className="field">Password (optional)<input className="input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} minLength={10} placeholder="Leave empty for Google sign-in" autoComplete="new-password" /></label>
+          <label className="field">Password (optional)<input className="input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} minLength={MIN_PASSWORD_LENGTH} placeholder="Leave empty for Google sign-in" autoComplete="new-password" /></label>
           <label className="field">Role
             <select className="select" value={role} onChange={(e) => setRole(e.target.value as "user" | "admin")}><option value="user">Member</option><option value="admin">Admin</option></select>
           </label>
