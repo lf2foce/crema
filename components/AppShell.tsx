@@ -67,6 +67,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   useEffect(() => { fetchWorkspace().catch((e) => setError((e as Error).message)); }, [fetchWorkspace]);
   useEffect(() => { if (slug) fetchScoped(slug).catch((e) => setError((e as Error).message)); }, [slug, fetchScoped]);
+  // a database in the URL that the workspace doesn't list yet (just made, or made by someone else): ask once more
+  const [asked, setAsked] = useState<string | null>(null);
+  useEffect(() => {
+    if (!slug || !workspace || asked === slug || workspace.sources.some((x) => x.slug === slug)) return;
+    setAsked(slug);
+    fetchWorkspace().catch(() => {});
+  }, [slug, workspace, asked, fetchWorkspace]);
 
   const notify = useCallback((text: string, isError = false) => {
     setToast({ text, error: isError });
@@ -118,6 +125,7 @@ function StatusBar() {
         {workspace && workspace.sources.length > 0 ? (
           <select className="sb-select" aria-label="Database" value={inDatabase ? slug ?? "" : ""} onChange={(e) => router.push(e.target.value ? routes.metrics(e.target.value) : routes.projects)}>
             {!inDatabase && <option value="">all databases</option>}
+            {inDatabase && slug && !workspace.sources.some((x) => x.slug === slug) && <option value={slug}>{slug}</option>}
             {workspace.sources.map((x) => <option key={x.id} value={x.slug}>{x.name}{x.status !== "ready" ? ` (${x.status})` : ""}</option>)}
           </select>
         ) : <span>no database yet</span>}

@@ -19,6 +19,9 @@ test("set up → connect → discover → review → certify → reuse", async (
   await expect(page).not.toHaveURL(/sign-in/);
   await expect(page.getByRole("heading", { name: /Connect a database/ })).toBeVisible();
   await page.getByRole("button", { name: "try the demo database" }).click();
+  // the status bar knows the database you just made (it once showed the first one in the list)
+  await expect(page).toHaveURL(/\/projects\/[^/]+\/metrics/);
+  await expect(page.getByLabel("Database")).toHaveValue(new URL(page.url()).pathname.split("/")[2]);
 
   // 2. discover: the live log, then the review queue
   await expect(page.getByText("Reading your schema")).toBeVisible();

@@ -4,10 +4,12 @@ import { useRouter } from "next/navigation";
 import { useCallback, useState } from "react";
 import { api, type AppState } from "@/lib/client";
 import { routes } from "@/lib/routes";
+import { useApp } from "./AppShell";
 
 /** The first screen of a new workspace, and "Connect existing": a connection string. What it is (production, staging…) is set on its page afterwards. */
 export function Connect({ state, notify }: { state: AppState; notify: (t: string, e?: boolean) => void }) {
   const router = useRouter();
+  const { reload } = useApp();
   const [url, setUrl] = useState("");
   const [busy, setBusy] = useState(false);
   const admin = state.me?.role === "admin";
@@ -17,9 +19,10 @@ export function Connect({ state, notify }: { state: AppState; notify: (t: string
     try {
       const r = await api<{ source: { slug: string }; writableTables: number; readOnlyRole: boolean }>("/api/sources", { body, source: null });
       if (state.model.configured) await api("/api/discover", { body: {}, source: r.source.slug });
+      await reload(); // the status bar lists databases from here: it must know the one just made
       router.push(routes.metrics(r.source.slug));
     } catch (e) { notify((e as Error).message, true); setBusy(false); }
-  }, [state.model.configured, notify, router]);
+  }, [state.model.configured, notify, router, reload]);
   if (!admin) return (
     <div className="connect"><h1>No databases yet</h1><p className="lead">An admin adds databases to this workspace. Ask one to connect yours.</p></div>
   );
