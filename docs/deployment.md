@@ -30,8 +30,14 @@ files are excluded from its build context; supply keys only at runtime.
 
 CI (`.github/workflows/release.yml`) publishes it to `ghcr.io/lf2foce/crema` for
 amd64 and arm64 on every push to `main` (`:latest`, `:sha-<commit>`) and for each
-`v*` tag (`:1.2.3`, `:1.2`). Compose uses `:latest` unless `CREMA_IMAGE_TAG` says
-otherwise; `CREMA_IMAGE` points it at a fork's registry. `--build` builds locally.
+`v*` tag (`:1.2.3`, `:1.2`), after the checks in `ci.yml` pass (typecheck, the whole
+test suite against PostgreSQL 18 with nothing skipped, and the UI tests on
+`next start`); pull requests run the same checks plus an image build. Each image
+carries an SBOM and a signed build provenance:
+`gh attestation verify oci://ghcr.io/lf2foce/crema:latest -R lf2foce/crema`.
+Compose uses `:latest` unless `CREMA_IMAGE_TAG` says otherwise; `CREMA_IMAGE`
+points it at a fork's registry. `--build` builds locally. Dependabot opens weekly
+update PRs for actions, npm packages and base images.
 
 ```sh
 cp .env.docker.example .env.docker.local

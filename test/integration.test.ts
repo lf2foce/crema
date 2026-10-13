@@ -23,12 +23,14 @@ let snap: SchemaSnapshot;
 let available = true;
 
 beforeAll(async () => {
-  if (!URL) { available = false; return; }
+  const required = !!process.env.CREMA_TEST_REQUIRE_DB; // CI: no demo database is a failure, not a pass
+  if (!URL) { if (required) throw new Error("CREMA_DEMO_URL is not set (pnpm demo:db)"); available = false; return; }
   wh = new Warehouse(URL);
   try {
     await wh.query("select 1");
     snap = await snapshot(wh);
-  } catch {
+  } catch (e) {
+    if (required) throw e;
     available = false;
   }
 

@@ -25,7 +25,10 @@ const as = async <T>(role: string, db: string, fn: (c: pg.Client) => Promise<T>)
 };
 
 beforeAll(async () => {
-  try { const c = new pg.Client({ connectionString: ADMIN }); await c.connect(); await c.end(); } catch { available = false; return; }
+  try { const c = new pg.Client({ connectionString: ADMIN }); await c.connect(); await c.end(); } catch (e) {
+    if (process.env.CREMA_TEST_REQUIRE_DB) throw e; // CI: no cluster is a failure, not a pass
+    available = false; return;
+  }
   const p = await Hosting.createProvisioner(ADMIN);
   provisioner = p.role;
   h = new Hosting(p.url, Hosting.address(p.url, "db.example.com:5432", true));
