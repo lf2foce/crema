@@ -2,7 +2,7 @@
 # image plus pgBackRest. With CREMA_BACKUP_* set, every WAL segment is archived to S3-compatible
 # storage (encrypted) and `crema-backup` takes base backups: restore to any moment, not just last night.
 # Without them it is plain PostgreSQL. Bumping the version restarts the databases on the next deploy.
-FROM postgres:18.6-bookworm
+FROM postgres:18.7-bookworm
 
 # pgBackRest from PGDG (already configured in the base image); ca-certificates to verify S3 over HTTPS
 RUN apt-get update \
